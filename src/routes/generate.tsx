@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import Dropzone from "../components/dropzone";
-import { generateImage } from "../lib/tauri";
+import {
+  createPrediction,
+  refreshGeneration,
+  getGenerations,
+  type Generation,
+} from "../lib/tauri";
 
 const STORAGE_KEY = "replicate_api_key";
 
@@ -14,8 +19,23 @@ export default function Generate() {
   const [generating, setGenerating] = useState(false);
   const [resultPath, setResultPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<Generation[]>([]);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  // Synchronous re-entrancy guard. The button's `disabled` only takes effect on
+  // the next render commit, so rapid/duplicate clicks can slip several
+  // `startGeneration` calls through before then, each firing its own create.
+  // A ref flips immediately, so any extra call bails out at once.
+  const inFlight = useRef(false);
 
   const apiKey = localStorage.getItem(STORAGE_KEY);
+
+  function loadRecent() {
+    getGenerations().then(setRecent).catch(console.error);
+  }
+
+  useEffect(() => {
+    loadRecent();
+  }, []);
 
   function handleFile(uri: string, name: string) {
     setDataUri(uri);
@@ -24,8 +44,8 @@ export default function Generate() {
     setError(null);
   }
 
-  async function handleGenerate() {
-    if (!dataUri || !prompt.trim()) return;
+  async function startGeneration(uri: string, promptText: string) {
+    if (inFlight.current) return;
 
     const key = localStorage.getItem(STORAGE_KEY);
     if (!key) {
@@ -33,17 +53,59 @@ export default function Generate() {
       return;
     }
 
+    inFlight.current = true;
     setGenerating(true);
     setError(null);
     setResultPath(null);
 
     try {
-      const path = await generateImage(dataUri, prompt.trim(), key);
-      setResultPath(path);
+      // Async mode: this returns as soon as the prediction is queued. The new
+      // record shows up in "Recent generations" as pending; the user refreshes
+      // it to pull the finished image.
+      await createPrediction(uri, promptText, key);
     } catch (err) {
       setError(String(err));
     } finally {
+      // Whether it queued or failed at creation, a record was stored — reload
+      // so the pending/failed entry appears.
+      loadRecent();
       setGenerating(false);
+      inFlight.current = false;
+    }
+  }
+
+  function handleGenerate() {
+    if (!dataUri || !prompt.trim()) return;
+    startGeneration(dataUri, prompt.trim());
+  }
+
+  function regenerate(g: Generation) {
+    setDataUri(g.input_data_uri);
+    setImageName("Reused source image");
+    setPrompt(g.prompt);
+    startGeneration(g.input_data_uri, g.prompt);
+  }
+
+  async function refresh(g: Generation) {
+    const key = localStorage.getItem(STORAGE_KEY);
+    if (!key) {
+      navigate("/");
+      return;
+    }
+
+    setRefreshingId(g.id);
+    setError(null);
+
+    try {
+      const updated = await refreshGeneration(g.id, key);
+      if (updated.status === "succeeded" && updated.output_path) {
+        setResultPath(updated.output_path);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      loadRecent();
+      setRefreshingId(null);
     }
   }
 
@@ -108,7 +170,7 @@ export default function Generate() {
           disabled={!dataUri || !prompt.trim() || generating || !apiKey}
           className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {generating ? "Generating..." : "Generate"}
+          {generating ? "Starting..." : "Generate"}
         </button>
 
         {error && (
@@ -129,6 +191,82 @@ export default function Generate() {
           </div>
         )}
       </div>
+
+      {recent.length > 0 && (
+        <div className="space-y-3 pt-4 border-t border-gray-800">
+          <h3 className="text-sm font-medium text-gray-300">
+            Recent generations
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {recent.map((g) => {
+              const pending = g.status === "pending";
+              const failed = g.status === "failed";
+              const dimmed = pending || failed;
+              const thumb = g.output_path
+                ? convertFileSrc(g.output_path)
+                : g.input_data_uri;
+              const isRefreshing = refreshingId === g.id;
+              return (
+                <div
+                  key={g.id}
+                  className="space-y-2 rounded-lg border border-gray-800 p-2"
+                >
+                  <div className="relative">
+                    <img
+                      src={thumb}
+                      alt={g.prompt}
+                      className={`w-full aspect-square rounded object-cover border border-gray-800 ${
+                        dimmed ? "opacity-40" : ""
+                      }`}
+                    />
+                    {pending && (
+                      <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-900/80 text-amber-200">
+                        Pending
+                      </span>
+                    )}
+                    {failed && (
+                      <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-red-900/80 text-red-200">
+                        Failed
+                      </span>
+                    )}
+                  </div>
+                  <p
+                    className="text-xs text-gray-400 line-clamp-2"
+                    title={g.prompt}
+                  >
+                    {g.prompt}
+                  </p>
+                  {failed && g.error && (
+                    <p
+                      className="text-[10px] text-red-400 line-clamp-2"
+                      title={g.error}
+                    >
+                      {g.error}
+                    </p>
+                  )}
+                  {pending ? (
+                    <button
+                      onClick={() => refresh(g)}
+                      disabled={isRefreshing || !apiKey}
+                      className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isRefreshing ? "Refreshing..." : "Refresh status"}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => regenerate(g)}
+                      disabled={generating || !apiKey}
+                      className="w-full py-1.5 text-xs bg-gray-800 text-gray-200 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {failed ? "Retry" : "Re-generate"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

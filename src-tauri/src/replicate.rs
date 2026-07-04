@@ -1,72 +1,149 @@
 use serde::{Deserialize, Serialize};
 
+/// Model output format. Kept as a constant so the request payload and the saved
+/// file extension can never drift apart.
+const OUTPUT_FORMAT: &str = "jpg";
+
 #[derive(Debug, Deserialize)]
 struct Prediction {
     id: String,
     status: String,
     output: Option<serde_json::Value>,
     error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreatePredictionResponse {
-    id: String,
-    status: String,
-    urls: PredictionUrls,
+    urls: Option<PredictionUrls>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PredictionUrls {
-    get: String,
+    get: Option<String>,
 }
 
-pub async fn generate_image(
+/// Create a prediction in Replicate's async mode (no `Prefer: wait` header):
+/// the request returns immediately with a prediction id and `status:
+/// "starting"`. We store the generation as `pending` (keyed by the Replicate
+/// prediction id) along with the `urls.get` poll URL, and let the frontend call
+/// `refresh_generation` later to advance it to `succeeded`/`failed`.
+pub async fn create_prediction(
     data_uri: &str,
     prompt: &str,
     api_key: &str,
-) -> Result<String, String> {
+) -> Result<Generation, String> {
+    match do_create(data_uri, prompt, api_key).await {
+        Ok(gen) => Ok(gen),
+        Err(err) => {
+            // Record the failed attempt so the user can retry from the same
+            // source image and prompt.
+            let record = new_generation(prompt, data_uri, "failed", None, None, Some(err.clone()));
+            write_generation(&record);
+            Err(err)
+        }
+    }
+}
+
+async fn do_create(
+    data_uri: &str,
+    prompt: &str,
+    api_key: &str,
+) -> Result<Generation, String> {
     let client = reqwest::Client::new();
 
-    let model = "black-forest-labs/flux-dev";
+    let model = "google/nano-banana-2";
     let payload = serde_json::json!({
         "input": {
             "prompt": prompt,
-            "image": data_uri,
-            "num_outputs": 1,
+            "resolution": "1K",
+            "image_input": [data_uri],
+            "aspect_ratio": "1:1",
+            "output_format": OUTPUT_FORMAT,
         }
     });
+    let url = format!(
+        "https://api.replicate.com/v1/models/{}/predictions",
+        model
+    );
 
+    // Async mode: no `Prefer: wait` header, so this returns as soon as the
+    // prediction is queued rather than blocking until it finishes.
     let create_resp = client
-        .post(format!(
-            "https://api.replicate.com/v1/models/{}/predictions",
-            model
-        ))
+        .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Prefer", "wait")
         .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Failed to create prediction: {}", e))?;
 
-    if !create_resp.status().is_success() {
-        let status = create_resp.status();
+    let status = create_resp.status();
+    if !status.is_success() {
         let body = create_resp
             .text()
             .await
             .unwrap_or_else(|_| "unknown".to_string());
-        if status == 402 {
-            return Err("API quota exceeded or payment required".to_string());
-        }
-        return Err(format!("Replicate API error ({}): {}", status, body));
+        return Err(match status.as_u16() {
+            402 => "API quota exceeded or payment required".to_string(),
+            429 => format!(
+                "Rate limited by Replicate (429). Accounts without a payment method are \
+                 capped at ~6 requests/min; add billing at replicate.com/account/billing. \
+                 Response: {}",
+                body
+            ),
+            _ => format!("Replicate API error ({}): {}", status, body),
+        });
     }
 
-    let create_data: CreatePredictionResponse = create_resp
+    let prediction: Prediction = create_resp
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let prediction = poll_prediction(&client, &create_data.urls.get, api_key).await?;
+    let poll_url = prediction.urls.and_then(|u| u.get);
+
+    let mut record = new_generation(prompt, data_uri, "pending", poll_url, None, None);
+    // Key the record by Replicate's prediction id so `refresh_generation` can
+    // find it, and reflect any status/error the create response already carried.
+    record.id = prediction.id;
+    apply_prediction_status(&mut record, &prediction.status, prediction.error);
+    write_generation(&record);
+
+    Ok(record)
+}
+
+/// Poll a stored `pending` generation once and advance it if the prediction has
+/// reached a terminal state. Downloads and saves the image on success. Records
+/// that are already terminal are returned unchanged.
+pub async fn refresh_generation(id: &str, api_key: &str) -> Result<Generation, String> {
+    let mut record = load_generation(id).ok_or("Generation not found")?;
+
+    if record.status != "pending" {
+        return Ok(record);
+    }
+
+    let poll_url = record
+        .poll_url
+        .clone()
+        .ok_or("This generation has no poll URL to refresh")?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&poll_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch prediction status: {}", e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_else(|_| "unknown".to_string());
+        return Err(format!(
+            "Failed to fetch prediction status ({}): {}",
+            status, body
+        ));
+    }
+
+    let prediction: Prediction = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse status response: {}", e))?;
 
     if prediction.status == "succeeded" {
         let output = prediction.output.ok_or("No output from model")?;
@@ -79,7 +156,7 @@ pub async fn generate_image(
             .to_string();
 
         let images_dir = get_images_dir()?;
-        let filename = format!("{}.png", uuid::Uuid::new_v4());
+        let filename = format!("{}.{}", record.id, OUTPUT_FORMAT);
         let filepath = images_dir.join(&filename);
 
         let img_bytes = client
@@ -96,42 +173,29 @@ pub async fn generate_image(
         std::fs::write(&filepath, &img_bytes)
             .map_err(|e| format!("Failed to save image: {}", e))?;
 
-        Ok(filepath.to_string_lossy().to_string())
+        record.status = "succeeded".to_string();
+        record.output_path = Some(filepath.to_string_lossy().to_string());
+        record.error = None;
     } else {
-        let err_msg = prediction.error.unwrap_or_else(|| "Unknown error".into());
-        Err(format!("Generation failed: {}", err_msg))
+        apply_prediction_status(&mut record, &prediction.status, prediction.error);
     }
+
+    write_generation(&record);
+    Ok(record)
 }
 
-async fn poll_prediction(
-    client: &reqwest::Client,
-    get_url: &str,
-    api_key: &str,
-) -> Result<Prediction, String> {
-    let max_attempts = 60;
-    for _ in 0..max_attempts {
-        let resp = client
-            .get(get_url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to poll prediction: {}", e))?;
-
-        let prediction: Prediction = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse prediction: {}", e))?;
-
-        match prediction.status.as_str() {
-            "succeeded" => return Ok(prediction),
-            "failed" => return Ok(prediction),
-            "canceled" => return Err("Generation was canceled".to_string()),
-            _ => {
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-            }
+/// Map a Replicate prediction status onto our stored record. `starting` and
+/// `processing` stay `pending`; `failed`/`canceled` become `failed`.
+fn apply_prediction_status(record: &mut Generation, status: &str, error: Option<String>) {
+    match status {
+        "failed" | "canceled" => {
+            record.status = "failed".to_string();
+            record.error = Some(error.unwrap_or_else(|| status.to_string()));
+        }
+        _ => {
+            record.status = "pending".to_string();
         }
     }
-    Err("Timed out waiting for generation".to_string())
 }
 
 fn get_images_dir() -> Result<std::path::PathBuf, String> {
@@ -201,4 +265,110 @@ pub struct ImageEntry {
     pub filename: String,
     pub created_at: i64,
     pub size_bytes: u64,
+}
+
+/// A generation attempt, stored as a JSON sidecar so the user can re-run it or
+/// poll its status. The source image is kept inline as a data URI (the same
+/// value that was sent to the model), so re-generating needs no extra decoding
+/// on either side.
+///
+/// `status` is one of:
+/// - `"pending"`  — created in async mode, awaiting a `refresh_generation` poll.
+///   `poll_url` holds Replicate's `urls.get`; `output_path`/`error` are `None`.
+/// - `"succeeded"` — `output_path` points at the saved image.
+/// - `"failed"`   — `error` is set; can be retried from the source.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Generation {
+    pub id: String,
+    pub prompt: String,
+    pub input_data_uri: String,
+    pub status: String,
+    #[serde(default)]
+    pub poll_url: Option<String>,
+    pub output_path: Option<String>,
+    pub error: Option<String>,
+    pub created_at: i64,
+}
+
+/// Sidecar records live in a subdirectory so `list_saved_images` (which scans
+/// only the top-level directory for image files) never picks them up.
+fn get_generations_dir() -> Result<std::path::PathBuf, String> {
+    Ok(get_images_dir()?.join("generations"))
+}
+
+/// Build an in-memory record with a fresh uuid id and the current timestamp.
+/// Callers may overwrite `id` (e.g. with a Replicate prediction id) before
+/// persisting with `write_generation`.
+fn new_generation(
+    prompt: &str,
+    input_data_uri: &str,
+    status: &str,
+    poll_url: Option<String>,
+    output_path: Option<String>,
+    error: Option<String>,
+) -> Generation {
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    Generation {
+        id: uuid::Uuid::new_v4().to_string(),
+        prompt: prompt.to_string(),
+        input_data_uri: input_data_uri.to_string(),
+        status: status.to_string(),
+        poll_url,
+        output_path,
+        error,
+        created_at,
+    }
+}
+
+/// Reject ids that aren't a plain uuid / Replicate prediction id, so a record
+/// id coming back from the frontend can't escape the generations directory.
+fn is_safe_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn write_generation(record: &Generation) {
+    if !is_safe_id(&record.id) {
+        return;
+    }
+    let dir = match get_generations_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string(record) {
+        let _ = std::fs::write(dir.join(format!("{}.json", record.id)), json);
+    }
+}
+
+fn load_generation(id: &str) -> Option<Generation> {
+    if !is_safe_id(id) {
+        return None;
+    }
+    let path = get_generations_dir().ok()?.join(format!("{}.json", id));
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+pub fn list_generations() -> Result<Vec<Generation>, String> {
+    let dir = get_generations_dir()?;
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut records: Vec<Generation> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("Failed to read generations directory: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|s| serde_json::from_str::<Generation>(&s).ok())
+        .collect();
+
+    records.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+    Ok(records)
 }

@@ -15,8 +15,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::generate_image,
+            commands::create_prediction,
+            commands::refresh_generation,
             commands::get_images,
+            commands::get_generations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
