@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::db::Db;
+
 /// Model output format. Kept as a constant so the request payload and the saved
 /// file extension can never drift apart.
 const OUTPUT_FORMAT: &str = "jpg";
@@ -24,23 +26,23 @@ struct PredictionUrls {
 /// prediction id) along with the `urls.get` poll URL, and let the frontend call
 /// `refresh_generation` later to advance it to `succeeded`/`failed`.
 pub async fn create_prediction(
+    db: &Db,
     data_uri: &str,
     prompt: &str,
     api_key: &str,
 ) -> Result<Generation, String> {
-    match do_create(data_uri, prompt, api_key).await {
+    match do_create(db, data_uri, prompt, api_key).await {
         Ok(gen) => Ok(gen),
         Err(err) => {
-            // Record the failed attempt so the user can retry from the same
-            // source image and prompt.
             let record = new_generation(prompt, data_uri, "failed", None, None, Some(err.clone()));
-            write_generation(&record);
+            let _ = db.upsert_generation(&record);
             Err(err)
         }
     }
 }
 
 async fn do_create(
+    db: &Db,
     data_uri: &str,
     prompt: &str,
     api_key: &str,
@@ -62,8 +64,6 @@ async fn do_create(
         model
     );
 
-    // Async mode: no `Prefer: wait` header, so this returns as soon as the
-    // prediction is queued rather than blocking until it finishes.
     let create_resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
@@ -99,11 +99,9 @@ async fn do_create(
     let poll_url = prediction.urls.and_then(|u| u.get);
 
     let mut record = new_generation(prompt, data_uri, "pending", poll_url, None, None);
-    // Key the record by Replicate's prediction id so `refresh_generation` can
-    // find it, and reflect any status/error the create response already carried.
     record.id = prediction.id;
     apply_prediction_status(&mut record, &prediction.status, prediction.error);
-    write_generation(&record);
+    let _ = db.upsert_generation(&record);
 
     Ok(record)
 }
@@ -111,8 +109,12 @@ async fn do_create(
 /// Poll a stored `pending` generation once and advance it if the prediction has
 /// reached a terminal state. Downloads and saves the image on success. Records
 /// that are already terminal are returned unchanged.
-pub async fn refresh_generation(id: &str, api_key: &str) -> Result<Generation, String> {
-    let mut record = load_generation(id).ok_or("Generation not found")?;
+pub async fn refresh_generation(
+    db: &Db,
+    id: &str,
+    api_key: &str,
+) -> Result<Generation, String> {
+    let mut record = db.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
         return Ok(record);
@@ -176,16 +178,30 @@ pub async fn refresh_generation(id: &str, api_key: &str) -> Result<Generation, S
         record.status = "succeeded".to_string();
         record.output_path = Some(filepath.to_string_lossy().to_string());
         record.error = None;
+
+        let _ = db.upsert_generation(&record);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let entry = ImageEntry {
+            path: filepath.to_string_lossy().to_string(),
+            filename,
+            created_at: now,
+            size_bytes: img_bytes.len() as u64,
+        };
+        println!("inserting image {}", entry.path);
+        let _ = db.insert_image(&entry);
     } else {
         apply_prediction_status(&mut record, &prediction.status, prediction.error);
+        let _ = db.upsert_generation(&record);
     }
 
-    write_generation(&record);
     Ok(record)
 }
 
-/// Map a Replicate prediction status onto our stored record. `starting` and
-/// `processing` stay `pending`; `failed`/`canceled` become `failed`.
 fn apply_prediction_status(record: &mut Generation, status: &str, error: Option<String>) {
     match status {
         "failed" | "canceled" => {
@@ -198,17 +214,16 @@ fn apply_prediction_status(record: &mut Generation, status: &str, error: Option<
     }
 }
 
-fn get_images_dir() -> Result<std::path::PathBuf, String> {
+pub fn get_images_dir() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     Ok(home.join("Pictures").join("catalog-gen"))
 }
 
-/// Delete a saved image file and its associated generation sidecar.
+/// Delete a saved image file and its associated generation record.
 /// The path is canonicalized and required to sit directly inside the images
-/// directory, so a path coming back from the frontend can't remove the
-/// `generations` sidecars or escape the directory via `..`/symlinks and
-/// delete arbitrary files.
-pub fn delete_image(path: &str) -> Result<(), String> {
+/// directory, so a path coming back from the frontend can't remove sidecar
+/// records or escape the directory via `..`/symlinks.
+pub fn delete_image(db: &Db, path: &str) -> Result<(), String> {
     let canonical_dir = get_images_dir()?
         .canonicalize()
         .map_err(|e| format!("Images directory unavailable: {}", e))?;
@@ -216,87 +231,70 @@ pub fn delete_image(path: &str) -> Result<(), String> {
         .canonicalize()
         .map_err(|e| format!("Image not found: {}", e))?;
 
-    // Must be a file living directly in the images dir (not the generations
-    // subdirectory, not anything outside the scope).
     if canonical_target.parent() != Some(canonical_dir.as_path()) {
         return Err("Refusing to delete a file outside the images directory".to_string());
     }
 
     let path_str = canonical_target.to_string_lossy().to_string();
 
-    std::fs::remove_file(&canonical_target).map_err(|e| format!("Failed to delete image: {}", e))?;
+    std::fs::remove_file(&canonical_target)
+        .map_err(|e| format!("Failed to delete image: {}", e))?;
 
-    // Clean up the corresponding generation sidecar, if any.
-    if let Ok(gens) = list_generations() {
-        for gen in gens {
-            if gen.output_path.as_deref() == Some(&path_str) {
-                if is_safe_id(&gen.id) {
-                    if let Ok(dir) = get_generations_dir() {
-                        let _ = std::fs::remove_file(dir.join(format!("{}.json", gen.id)));
-                    }
-                }
-                break;
-            }
-        }
+    db.delete_image_by_path(&path_str)?;
+    if let Some(gen_id) = db.find_generation_by_output_path(&path_str) {
+        db.delete_generation_by_id(&gen_id)?;
     }
 
     Ok(())
 }
 
-pub fn list_saved_images() -> Result<Vec<ImageEntry>, String> {
-    let dir = get_images_dir()?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
+pub fn list_saved_images(db: &Db) -> Result<Vec<ImageEntry>, String> {
+    db.list_images()
+}
 
-    let mut entries = vec![];
-    let mut paths: Vec<_> = std::fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read images directory: {}", e))?
-        .filter_map(|entry| entry.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "png" || ext == "jpg" || ext == "jpeg")
-                .unwrap_or(false)
-        })
-        .collect();
+pub fn list_generations(db: &Db) -> Result<Vec<Generation>, String> {
+    db.list_generations()
+}
 
-    paths.sort_by_key(|e| {
-        std::cmp::Reverse(
-            e.metadata()
-                .and_then(|m| m.created())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-        )
-    });
+/// Accept a client-side normalized PNG data URI, decode it, save the file, and
+/// insert a row into the images table. Returns the new ImageEntry so the
+/// frontend can select it immediately.
+pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String> {
+    use base64::Engine;
 
-    for entry in paths {
-        let path = entry.path();
-        let created = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.created().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+    let images_dir = get_images_dir()?;
+    std::fs::create_dir_all(&images_dir)
+        .map_err(|e| format!("Failed to create images directory: {}", e))?;
 
-        let size = entry
-            .metadata()
-            .ok()
-            .map(|m| m.len())
-            .unwrap_or(0);
+    let encoded = data_uri
+        .split(',')
+        .nth(1)
+        .ok_or_else(|| "Invalid data URI".to_string())?;
 
-        entries.push(ImageEntry {
-            path: path.to_string_lossy().to_string(),
-            filename: path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            created_at: created,
-            size_bytes: size,
-        });
-    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("Failed to decode image data: {}", e))?;
 
-    Ok(entries)
+    let filename = format!("{}.png", uuid::Uuid::new_v4());
+    let filepath = images_dir.join(&filename);
+
+    std::fs::write(&filepath, &bytes)
+        .map_err(|e| format!("Failed to save image: {}", e))?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let entry = ImageEntry {
+        path: filepath.to_string_lossy().to_string(),
+        filename,
+        created_at: now,
+        size_bytes: bytes.len() as u64,
+    };
+
+    db.insert_image(&entry)?;
+    Ok(entry)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -330,15 +328,6 @@ pub struct Generation {
     pub created_at: i64,
 }
 
-/// Sidecar records live in a subdirectory so `list_saved_images` (which scans
-/// only the top-level directory for image files) never picks them up.
-fn get_generations_dir() -> Result<std::path::PathBuf, String> {
-    Ok(get_images_dir()?.join("generations"))
-}
-
-/// Build an in-memory record with a fresh uuid id and the current timestamp.
-/// Callers may overwrite `id` (e.g. with a Replicate prediction id) before
-/// persisting with `write_generation`.
 fn new_generation(
     prompt: &str,
     input_data_uri: &str,
@@ -362,53 +351,4 @@ fn new_generation(
         error,
         created_at,
     }
-}
-
-/// Reject ids that aren't a plain uuid / Replicate prediction id, so a record
-/// id coming back from the frontend can't escape the generations directory.
-fn is_safe_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
-fn write_generation(record: &Generation) {
-    if !is_safe_id(&record.id) {
-        return;
-    }
-    let dir = match get_generations_dir() {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    if let Ok(json) = serde_json::to_string(record) {
-        let _ = std::fs::write(dir.join(format!("{}.json", record.id)), json);
-    }
-}
-
-fn load_generation(id: &str) -> Option<Generation> {
-    if !is_safe_id(id) {
-        return None;
-    }
-    let path = get_generations_dir().ok()?.join(format!("{}.json", id));
-    let contents = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&contents).ok()
-}
-
-pub fn list_generations() -> Result<Vec<Generation>, String> {
-    let dir = get_generations_dir()?;
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut records: Vec<Generation> = std::fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read generations directory: {}", e))?
-        .filter_map(|entry| entry.ok())
-        .filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false))
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
-        .filter_map(|s| serde_json::from_str::<Generation>(&s).ok())
-        .collect();
-
-    records.sort_by_key(|r| std::cmp::Reverse(r.created_at));
-    Ok(records)
 }

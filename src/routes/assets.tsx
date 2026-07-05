@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useCallback, memo, type ReactNode } from "react";
 import { Link } from "react-router";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
@@ -7,6 +7,7 @@ import {
   createPrediction,
   refreshGeneration,
   deleteImage,
+  saveImage,
   type ImageEntry,
   type Generation,
 } from "../lib/tauri";
@@ -17,7 +18,6 @@ const STORAGE_KEY = "replicate_api_key";
 // ---------- helpers ----------
 
 type Dims = { w: number; h: number };
-type Staged = { dataUri: string; name: string; w: number; h: number; size: number };
 
 function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -53,9 +53,8 @@ async function assetToDataUri(path: string): Promise<string> {
   });
 }
 
-/** Normalize a picked file to a PNG data URI (matching the dropzone convention),
- *  reading its natural dimensions and encoded size along the way. */
-function fileToStaged(file: File): Promise<Staged> {
+/** Normalize a picked file to a PNG data URI. */
+function fileToDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -66,15 +65,7 @@ function fileToStaged(file: File): Promise<Staged> {
       canvas.getContext("2d")!.drawImage(img, 0, 0);
       const dataUri = canvas.toDataURL("image/png");
       URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => {
-        resolve({
-          dataUri,
-          name: file.name.replace(/\.[^.]+$/, "") + ".png",
-          w: img.naturalWidth,
-          h: img.naturalHeight,
-          size: blob?.size ?? Math.round((dataUri.length - 22) * 0.75),
-        });
-      }, "image/png");
+      resolve(dataUri);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -97,6 +88,105 @@ async function pollUntilDone(id: string, key: string): Promise<Generation> {
   throw new Error("Waktu tunggu habis saat membuat varian.");
 }
 
+const ImageCard = memo(function ImageCard({
+  img,
+  selected,
+  dim,
+  onSelect,
+  onLoad,
+}: {
+  img: ImageEntry;
+  selected: boolean;
+  dim: Dims | undefined;
+  onSelect: (path: string) => void;
+  onLoad: (path: string, w: number, h: number) => void;
+}) {
+  return (
+    <div
+      onClick={() => onSelect(img.path)}
+      style={{ cursor: "pointer", position: "relative" }}
+    >
+      <div
+        style={{
+          position: "relative",
+          aspectRatio: "1",
+          borderRadius: "var(--r-card)",
+          overflow: "hidden",
+          border: "1px solid var(--line-3)",
+          background: "var(--fill-1)",
+        }}
+      >
+        <img
+          src={convertFileSrc(img.path)}
+          alt={img.filename}
+          loading="lazy"
+          onLoad={(e) => {
+            const el = e.currentTarget;
+            onLoad(img.path, el.naturalWidth, el.naturalHeight);
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+        <span
+          style={{
+            position: "absolute",
+            bottom: 7,
+            right: 7,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: ".02em",
+            padding: "2px 5px",
+            borderRadius: "var(--r-badge-sm)",
+            background: "rgba(255,255,255,.92)",
+            color: "var(--ink-700)",
+          }}
+        >
+          {kindOf(img.filename)}
+        </span>
+        {selected && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              border: "1.5px solid var(--indigo-500)",
+              borderRadius: "var(--r-card)",
+              boxShadow: "0 0 0 1.5px var(--indigo-100)",
+            }}
+          />
+        )}
+      </div>
+      <div
+        style={{
+          marginTop: 7,
+          fontFamily: "var(--font-mono)",
+          fontSize: 11.5,
+          fontWeight: 500,
+          color: "var(--ink-700)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {img.filename}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--ink-400)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {dim ? `${dim.w}\u00d7${dim.h}` : "\u00a0"}
+      </div>
+    </div>
+  );
+});
+
 // ---------- route ----------
 
 export default function Assets() {
@@ -106,7 +196,6 @@ export default function Assets() {
   const [gens, setGens] = useState<Record<string, Generation>>({});
   const [dims, setDims] = useState<Record<string, Dims>>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [staged, setStaged] = useState<Staged | null>(null);
 
   const [variantOpen, setVariantOpen] = useState(false);
   const [variantPrompt, setVariantPrompt] = useState("");
@@ -131,17 +220,21 @@ export default function Assets() {
     load().catch((e) => setError(String(e)));
   }, []);
 
-  function selectAsset(path: string) {
+  const selectAsset = useCallback((path: string) => {
     setSelectedPath(path);
-    setStaged(null);
     setVariantOpen(false);
     setVariantPrompt("");
     setError(null);
-  }
+  }, []);
+
+  const handleImageLoad = useCallback((path: string, w: number, h: number) => {
+    setDims((prev) =>
+      prev[path] ? prev : { ...prev, [path]: { w, h } }
+    );
+  }, []);
 
   function close() {
     setSelectedPath(null);
-    setStaged(null);
     setVariantOpen(false);
     setVariantPrompt("");
   }
@@ -159,13 +252,14 @@ export default function Assets() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || !file.type.startsWith("image/")) return;
+    setError(null);
     try {
-      const s = await fileToStaged(file);
-      setSelectedPath(null);
-      setStaged(s);
+      const dataUri = await fileToDataUri(file);
+      const saved = await saveImage(dataUri);
+      await load();
+      setSelectedPath(saved.path);
       setVariantOpen(true);
       setVariantPrompt("");
-      setError(null);
     } catch (err) {
       setError(String(err));
     }
@@ -179,18 +273,17 @@ export default function Assets() {
       return;
     }
     if (!variantPrompt.trim()) return;
-    if (!staged && !selectedPath) return;
+    if (!selectedPath) return;
 
     setGenerating(true);
     setError(null);
     try {
-      const src = staged ? staged.dataUri : await assetToDataUri(selectedPath!);
+      const src = await assetToDataUri(selectedPath!);
       const created = await createPrediction(src, variantPrompt.trim(), key);
       const done = await pollUntilDone(created.id, key);
       if (done.status === "succeeded" && done.output_path) {
         await load();
         setSelectedPath(done.output_path);
-        setStaged(null);
         setVariantOpen(false);
         setVariantPrompt("");
       } else {
@@ -221,33 +314,20 @@ export default function Assets() {
   const selectedImage = selectedPath
     ? images.find((i) => i.path === selectedPath) ?? null
     : null;
-  const hasSelection = !!staged || !!selectedImage;
+  const hasSelection = !!selectedImage;
 
-  // Unified detail-panel view model for either a library asset or a staged upload.
-  const detail = staged
+  const detail = selectedImage
     ? {
-        preview: staged.dataUri,
-        name: staged.name,
-        kind: "PNG",
-        dims: `${staged.w}×${staged.h}`,
-        sizeText: fmtSize(staged.size),
-        added: "Belum disimpan",
-        prompt: undefined as string | undefined,
-        isStaged: true,
+        preview: convertFileSrc(selectedImage.path),
+        name: selectedImage.filename,
+        kind: kindOf(selectedImage.filename),
+        dims: dims[selectedImage.path]
+          ? `${dims[selectedImage.path].w}×${dims[selectedImage.path].h}`
+          : "…",
+        sizeText: fmtSize(selectedImage.size_bytes),
+        added: fmtDate(selectedImage.created_at),
+        prompt: gens[selectedImage.path]?.prompt,
       }
-    : selectedImage
-      ? {
-          preview: convertFileSrc(selectedImage.path),
-          name: selectedImage.filename,
-          kind: kindOf(selectedImage.filename),
-          dims: dims[selectedImage.path]
-            ? `${dims[selectedImage.path].w}×${dims[selectedImage.path].h}`
-            : "…",
-          sizeText: fmtSize(selectedImage.size_bytes),
-          added: fmtDate(selectedImage.created_at),
-          prompt: gens[selectedImage.path]?.prompt,
-          isStaged: false,
-        }
       : null;
 
   const generateDisabled = generating || !variantPrompt.trim();
@@ -293,7 +373,7 @@ export default function Assets() {
             {images.length}
           </span>
           <div style={{ flex: 1 }} />
-          <Link to="/" style={{ textDecoration: "none" }}>
+          <Link to="/settings" style={{ textDecoration: "none" }}>
             <Button variant="ghost">Kunci API</Button>
           </Link>
           <Button variant="outline" onClick={onUploadClick}>
@@ -371,105 +451,16 @@ export default function Assets() {
                   alignContent: "start",
                 }}
               >
-                {images.map((img) => {
-                  const selected = img.path === selectedPath;
-                  const d = dims[img.path];
-                  return (
-                    <div
-                      key={img.path}
-                      onClick={() => selectAsset(img.path)}
-                      style={{ cursor: "pointer", position: "relative" }}
-                    >
-                      <div
-                        style={{
-                          position: "relative",
-                          aspectRatio: "1",
-                          borderRadius: "var(--r-card)",
-                          overflow: "hidden",
-                          border: "1px solid var(--line-3)",
-                          background: "var(--fill-1)",
-                        }}
-                      >
-                        <img
-                          src={convertFileSrc(img.path)}
-                          alt={img.filename}
-                          loading="lazy"
-                          onLoad={(e) => {
-                            const el = e.currentTarget;
-                            setDims((prev) =>
-                              prev[img.path]
-                                ? prev
-                                : {
-                                    ...prev,
-                                    [img.path]: {
-                                      w: el.naturalWidth,
-                                      h: el.naturalHeight,
-                                    },
-                                  }
-                            );
-                          }}
-                          style={{
-                            position: "absolute",
-                            inset: 0,
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
-                        />
-                        <span
-                          style={{
-                            position: "absolute",
-                            bottom: 7,
-                            right: 7,
-                            fontSize: 10,
-                            fontWeight: 700,
-                            letterSpacing: ".02em",
-                            padding: "2px 5px",
-                            borderRadius: "var(--r-badge-sm)",
-                            background: "rgba(255,255,255,.92)",
-                            color: "var(--ink-700)",
-                          }}
-                        >
-                          {kindOf(img.filename)}
-                        </span>
-                        {selected && (
-                          <div
-                            style={{
-                              position: "absolute",
-                              inset: 0,
-                              border: "1.5px solid var(--indigo-500)",
-                              borderRadius: "var(--r-card)",
-                              boxShadow: "0 0 0 1.5px var(--indigo-100)",
-                            }}
-                          />
-                        )}
-                      </div>
-                      <div
-                        style={{
-                          marginTop: 7,
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 11.5,
-                          fontWeight: 500,
-                          color: "var(--ink-700)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {img.filename}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: "var(--ink-400)",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {d ? `${d.w}×${d.h}` : " "}
-                      </div>
-                    </div>
-                  );
-                })}
+                {images.map((img) => (
+                  <ImageCard
+                    key={img.path}
+                    img={img}
+                    selected={img.path === selectedPath}
+                    dim={dims[img.path]}
+                    onSelect={selectAsset}
+                    onLoad={handleImageLoad}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -545,23 +536,6 @@ export default function Assets() {
                       objectFit: "contain",
                     }}
                   />
-                  {detail.isStaged && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: 8,
-                        left: 8,
-                        fontSize: 10,
-                        fontWeight: 600,
-                        padding: "2px 6px",
-                        borderRadius: "var(--r-badge)",
-                        color: "var(--indigo-600)",
-                        background: "rgba(255,255,255,.92)",
-                      }}
-                    >
-                      Unggahan baru
-                    </span>
-                  )}
                 </div>
 
                 <div
@@ -743,8 +717,7 @@ export default function Assets() {
 
               <div style={{ flex: 1 }} />
 
-              {!detail.isStaged && (
-                <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line-1)" }}>
+              <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line-1)" }}>
                   <Button variant="danger" disabled={deleting} onClick={del}>
                     <svg width="14" height="14" viewBox="0 0 15 15">
                       <path
@@ -759,7 +732,6 @@ export default function Assets() {
                     {deleting ? "Menghapus…" : "Hapus aset"}
                   </Button>
                 </div>
-              )}
             </div>
           )}
         </div>

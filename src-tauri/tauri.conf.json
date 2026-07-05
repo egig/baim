@@ -20,9 +20,10 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' asset: http://asset.localhost",
       "assetProtocol": {
-        "scope": ["$HOME/Pictures/catalog-gen/**"]
+        "enable": true,
+        "scope": ["$HOME/Pictures/catalog-gen/**/*"]
       }
     }
   },

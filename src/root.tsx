@@ -127,12 +127,7 @@ const iconLibrary = (
   </svg>
 );
 
-const iconTag = (
-  <svg width="15" height="15" viewBox="0 0 15 15" style={{ color: "var(--ink-500)" }}>
-    {strokePath("M2.4 7.6 7.4 2.6h4.2v4.2l-5 5a1 1 0 0 1-1.4 0L2.4 9a1 1 0 0 1 0-1.4Z")}
-    {strokePath("M9.6 5.1h.01")}
-  </svg>
-);
+
 
 /* ---------- shell ---------- */
 
@@ -183,72 +178,10 @@ export default function Root() {
 
         {/* Nav */}
         <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
-          <NavItem to="/assets" label="Pustaka aset" icon={iconLibrary} />
+          <NavItem to="/" label="Pustaka aset" icon={iconLibrary} />
         </div>
 
-        {/* Tags */}
-        <div
-          style={{
-            padding: "16px 20px 5px",
-            fontSize: 10.5,
-            fontWeight: 600,
-            letterSpacing: ".04em",
-            color: "var(--ink-350)",
-            textTransform: "uppercase",
-          }}
-        >
-          Tags
-        </div>
-        <div style={{ padding: "0 10px", display: "flex", flexDirection: "column", gap: 1 }}>
-          <div
-            style={{
-              height: 30,
-              padding: "0 8px",
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              borderRadius: 6,
-              color: "var(--ink-500)",
-              fontSize: 12.5,
-              fontWeight: 500,
-            }}
-          >
-            <span style={{ display: "flex", opacity: 0.85 }}>{iconTag}</span>
-            <span>Produk</span>
-          </div>
-          <div
-            style={{
-              height: 30,
-              padding: "0 8px",
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              borderRadius: 6,
-              color: "var(--ink-500)",
-              fontSize: 12.5,
-              fontWeight: 500,
-            }}
-          >
-            <span style={{ display: "flex", opacity: 0.85 }}>{iconTag}</span>
-            <span>Promosi</span>
-          </div>
-          <div
-            style={{
-              height: 30,
-              padding: "0 8px",
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              borderRadius: 6,
-              color: "var(--ink-500)",
-              fontSize: 12.5,
-              fontWeight: 500,
-            }}
-          >
-            <span style={{ display: "flex", opacity: 0.85 }}>{iconTag}</span>
-            <span>Sosial media</span>
-          </div>
-        </div>
+              
 
         <div style={{ flex: 1 }} />
 
@@ -263,7 +196,7 @@ export default function Root() {
           }}
         >
           <Link
-            to="/"
+            to="/settings"
             style={{
               textDecoration: "none",
               display: "flex",

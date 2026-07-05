@@ -48,3 +48,7 @@ export interface Generation {
 export async function getGenerations(): Promise<Generation[]> {
   return invoke<Generation[]>("get_generations");
 }
+
+export async function saveImage(dataUri: string): Promise<ImageEntry> {
+  return invoke<ImageEntry>("save_uploaded_image", { dataUri });
+}
