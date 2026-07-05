@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-05 (provider abstraction: `ImageProvider` trait +
-global provider selection)
+**Last updated**: 2026-07-05 (Google/Gemini provider now uses the async Batch API
+— `batchGenerateContent` inline job + poll; query-driven frontend polling)
 
 ## Commands
 
@@ -44,7 +44,7 @@ Tauri v2 app, two halves over `invoke()`.
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | `ImageProvider` trait, `GenerateRequest`/`CreateOutcome`/`PollOutcome`/`ProviderInfo`, and the provider registry (`all_providers`/`get_provider`) |
 | `providers/replicate.rs` | Concrete Replicate impl (`google/nano-banana-2`, async poll) |
-| `providers/google.rs` | Concrete Google/Gemini impl (Interactions API, `gemini-3.1-flash-image`, synchronous, retries transient 5xx) |
+| `providers/google.rs` | Concrete Google/Gemini impl (async Batch API, `gemini-3.1-flash-image`, `:batchGenerateContent` inline job + poll operation, retries transient 5xx on create) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
@@ -59,14 +59,25 @@ Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
 `all_providers()`; the settings dropdown, per-provider API-key inputs, and
 per-generation dispatch are all driven off that registry. Registered providers:
-**Replicate** (async, `google/nano-banana-2`) and **Google/Gemini** (synchronous,
-`gemini-3.1-flash-image` via the Interactions API — `POST /v1/interactions`,
-model in the body, image in `steps[].content[]`). The trait supports both
-async-poll providers (`CreateOutcome::Pending { poll_url }`, advanced by `poll`)
-and synchronous ones (`CreateOutcome::Done { image_bytes }`, saved immediately —
-Google returns the edited image inline in the same interaction). The active provider
-is a **global choice** stored in the DB `settings` table (`active_provider` key)
-and each `generations` row records the `provider` that produced it.
+**Replicate** (async, `google/nano-banana-2`) and **Google/Gemini** (async, via
+the **Batch API**). Google submits a single-request inline batch job — `POST
+{v1beta}/models/gemini-3.1-flash-image:batchGenerateContent` with the prompt as a
+text part and the source image as an `inline_data` part, `response_modalities:
+[TEXT, IMAGE]` — and returns the operation name as the poll URL; `poll` GETs
+`{v1beta}/{operation}` (a long-running `Operation`), keys off its `done` flag
+plus the batch `state`, then reads the generated image out of the inline
+response. Batch trades latency (target turnaround up to 24h, usually much faster)
+for 50% cost and higher rate limits. The Batch REST response is loosely specced —
+state appears as `BATCH_STATE_*` (REST) or `JOB_STATE_*` (SDKs) and nests under
+`metadata`/`response` — so `google.rs` parses the operation as `serde_json::Value`
+and searches defensively (`find_state` by suffix, recursive `find_inline_image`
+and `find_error_message`) rather than relying on a fixed shape. Both
+registered providers are async-poll (`CreateOutcome::Pending { poll_url }`,
+advanced by `poll`); the trait *also* supports synchronous providers
+(`CreateOutcome::Done { image_bytes }`, saved immediately) for future backends,
+even though none is registered today. The active provider is a **global choice**
+stored in the DB `settings` table (`active_provider` key) and each `generations`
+row records the `provider` that produced it.
 
 ### Key constraints
 
@@ -95,9 +106,14 @@ and each `generations` row records the `provider` that produced it.
   `app.asset_protocol_scope().allow_directory(dir, true)` (in `lib.rs` setup and
   on every `set_storage_dir`). Requires `protocol-asset` Cargo feature.
   CSP must allow `asset:` and `http://asset.localhost` for `img-src`.
-- **Polling** — `create_prediction` returns immediately (async mode). Frontend
-  drives `refresh_generation` via `pollUntilDone()` (45 attempts, 2s interval)
-  in `assets.tsx:91`.
+- **Polling** — `create_prediction` returns immediately with a `pending` record.
+  Polling is **query-driven**: `assetsQuery` (`src/lib/queries.ts`) has a
+  `refetchInterval` that fires every 2s while any generation is `pending`, and its
+  `fetchAssets` advances each pending row one step by calling `refresh_generation`
+  (via `refreshGeneration(id)`). The interval stops once nothing is pending.
+  In-progress generations render as spinner placeholder tiles (`PendingCard` in
+  `assets.tsx`); the `generate()` flow is non-blocking (fire, close panel, free
+  the button) — the finished image appears when polling completes.
 - **Upload normalization** — uploaded images are converted to PNG data URIs
   client-side (canvas re-encode) via `fileToDataUri()` in `assets.tsx`.
   Images are **saved to the DB and filesystem immediately on pick**

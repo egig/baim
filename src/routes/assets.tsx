@@ -14,6 +14,7 @@ import {
   listProviders,
   hasApiKey,
   type ImageEntry,
+  type Generation,
 } from "../lib/tauri";
 import { assetsQuery } from "../lib/queries";
 import { Button } from "../root";
@@ -177,6 +178,76 @@ const ImageCard = memo(function ImageCard({
   );
 });
 
+/** An in-progress generation: the source image dimmed under a spinning icon,
+ *  shown until polling replaces it with the finished result. */
+const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
+  return (
+    <div style={{ position: "relative" }}>
+      <div
+        style={{
+          position: "relative",
+          aspectRatio: "1",
+          borderRadius: "var(--r-card)",
+          overflow: "hidden",
+          border: "1px solid var(--line-3)",
+          background: "var(--fill-1)",
+        }}
+      >
+        <img
+          src={gen.input_data_uri}
+          alt=""
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: 0.35,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <svg
+            className="assets-spin"
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            style={{ color: "var(--indigo-500)" }}
+          >
+            <path
+              d="M21 12a9 9 0 1 1-6.219-8.56"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div
+        style={{
+          marginTop: 7,
+          fontSize: 11.5,
+          fontWeight: 500,
+          color: "var(--ink-400)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        Menghasilkan…
+      </div>
+    </div>
+  );
+});
+
 // ---------- route ----------
 
 /** Prefetch the asset library into the query cache so navigation to "/" is
@@ -191,7 +262,11 @@ export default function Assets() {
 
   const qc = useQueryClient();
   const { data } = useQuery(assetsQuery);
-  const { images, gens } = data ?? { images: [], gens: {} };
+  const { images, gens, pending } = data ?? {
+    images: [],
+    gens: {},
+    pending: [],
+  };
 
   /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
    *  settles, so callers can safely select the newly-created asset afterward. */
@@ -461,6 +536,9 @@ export default function Assets() {
                   alignContent: "start",
                 }}
               >
+                {pending.map((gen) => (
+                  <PendingCard key={gen.id} gen={gen} />
+                ))}
                 {images.map((img) => (
                   <ImageCard
                     key={img.path}

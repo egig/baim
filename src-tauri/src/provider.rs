@@ -12,9 +12,13 @@ pub struct GenerateRequest {
 /// a poll URL and finish later; synchronous providers hand back image bytes
 /// directly, so the orchestrator can save them immediately.
 pub enum CreateOutcome {
-    // Async providers (Replicate) return a poll URL, advanced later by `poll`.
+    // Async providers (Replicate, Google/Gemini) return a poll URL, advanced
+    // later by `poll`.
     Pending { poll_url: String },
-    // Synchronous providers (Google/Gemini) return the image bytes directly.
+    // Synchronous providers return the image bytes directly, saved immediately.
+    // No registered provider is synchronous today, but the orchestrator still
+    // handles this so adding one needs no plumbing changes.
+    #[allow(dead_code)]
     Done { image_bytes: Vec<u8>, ext: String },
 }
 

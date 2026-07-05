@@ -68,3 +68,13 @@ body {
 .assets-app ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Spinner for in-progress generation tiles (routes/assets.tsx). */
+@keyframes assets-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.assets-app .assets-spin {
+  animation: assets-spin 0.9s linear infinite;
+}
