@@ -933,7 +933,7 @@ export default function Assets() {
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {/* Grid */}
-          <div style={{ flex: 1, overflow: "auto", padding: "20px 22px 32px", minWidth: 0 }}>
+          <div style={{ overflow: "auto", padding: "20px 22px 32px", minWidth: 0, width: detail ? "476px" : "100%" }}>
             {images.length === 0 ? (
               <div
                 style={{
@@ -1199,9 +1199,10 @@ export default function Assets() {
                             fontSize: 11.5,
                             color: "var(--ink-500)",
                             marginBottom: 5,
+                            padding: "0 10px",
                           }}
                         >
-                          Prompt asal
+                          Prompt
                         </div>
                         <div
                           style={{
