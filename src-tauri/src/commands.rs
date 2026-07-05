@@ -11,8 +11,10 @@ pub async fn create_prediction(
     data_uri: String,
     prompt: String,
     provider: String,
+    source_id: Option<String>,
 ) -> Result<Generation, String> {
-    generation::create_prediction(&*state, &data_uri, &prompt, &provider).await
+    generation::create_prediction(&*state, &data_uri, &prompt, &provider, source_id.as_deref())
+        .await
 }
 
 /// Create one generation per prompt in a single call, sharing one source image
@@ -23,8 +25,10 @@ pub async fn create_predictions(
     data_uri: String,
     prompts: Vec<String>,
     provider: String,
+    source_id: Option<String>,
 ) -> Result<Vec<Generation>, String> {
-    generation::create_predictions(&*state, &data_uri, &prompts, &provider).await
+    generation::create_predictions(&*state, &data_uri, &prompts, &provider, source_id.as_deref())
+        .await
 }
 
 #[tauri::command]

@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface ImageEntry {
   path: string;
+  /** Stable id used to link generations back to this image as their source. */
+  id: string;
   filename: string;
   created_at: number;
   size_bytes: number;
@@ -10,12 +12,14 @@ export interface ImageEntry {
 export async function createPrediction(
   dataUri: string,
   prompt: string,
-  provider: string
+  provider: string,
+  sourceId?: string
 ): Promise<Generation> {
   return invoke<Generation>("create_prediction", {
     dataUri,
     prompt,
     provider,
+    sourceId: sourceId ?? null,
   });
 }
 
@@ -24,12 +28,14 @@ export async function createPrediction(
 export async function createPredictions(
   dataUri: string,
   prompts: string[],
-  provider: string
+  provider: string,
+  sourceId?: string
 ): Promise<Generation[]> {
   return invoke<Generation[]>("create_predictions", {
     dataUri,
     prompts,
     provider,
+    sourceId: sourceId ?? null,
   });
 }
 
@@ -54,6 +60,8 @@ export interface Generation {
   poll_url: string | null;
   output_path: string | null;
   error: string | null;
+  /** The id of the image this was generated from, or null for legacy rows. */
+  source_id: string | null;
   created_at: number;
 }
 

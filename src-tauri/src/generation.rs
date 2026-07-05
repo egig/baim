@@ -15,8 +15,9 @@ pub async fn create_prediction(
     data_uri: &str,
     prompt: &str,
     provider_id: &str,
+    source_id: Option<&str>,
 ) -> Result<Generation, String> {
-    let gen = create_one(db, data_uri, prompt, provider_id).await;
+    let gen = create_one(db, data_uri, prompt, provider_id, source_id).await;
     match &gen.error {
         Some(err) if gen.status == "failed" => Err(err.clone()),
         _ => Ok(gen),
@@ -33,6 +34,7 @@ pub async fn create_predictions(
     data_uri: &str,
     prompts: &[String],
     provider_id: &str,
+    source_id: Option<&str>,
 ) -> Result<Vec<Generation>, String> {
     if prompts.is_empty() {
         return Err("No prompts provided".to_string());
@@ -40,7 +42,7 @@ pub async fn create_predictions(
     let mut out = Vec::with_capacity(prompts.len());
     for prompt in prompts {
         // Sequential: avoids bursting the provider's rate limits.
-        out.push(create_one(db, data_uri, prompt, provider_id).await);
+        out.push(create_one(db, data_uri, prompt, provider_id, source_id).await);
     }
     Ok(out)
 }
@@ -48,12 +50,26 @@ pub async fn create_predictions(
 /// Kick off a single generation, always returning a persisted record. On failure
 /// the record is stored as `failed` with the error set, rather than an `Err`, so
 /// one bad prompt can't abort a batch. Shared by the singular and batch paths.
-async fn create_one(db: &Db, data_uri: &str, prompt: &str, provider_id: &str) -> Generation {
-    match do_create(db, data_uri, prompt, provider_id).await {
+async fn create_one(
+    db: &Db,
+    data_uri: &str,
+    prompt: &str,
+    provider_id: &str,
+    source_id: Option<&str>,
+) -> Generation {
+    match do_create(db, data_uri, prompt, provider_id, source_id).await {
         Ok(gen) => gen,
         Err(err) => {
-            let record =
-                new_generation(prompt, data_uri, provider_id, "failed", None, None, Some(err));
+            let record = new_generation(
+                prompt,
+                data_uri,
+                provider_id,
+                "failed",
+                None,
+                None,
+                Some(err),
+                source_id,
+            );
             let _ = db.upsert_generation(&record);
             record
         }
@@ -65,6 +81,7 @@ async fn do_create(
     data_uri: &str,
     prompt: &str,
     provider_id: &str,
+    source_id: Option<&str>,
 ) -> Result<Generation, String> {
     let provider =
         get_provider(provider_id).ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
@@ -91,13 +108,15 @@ async fn do_create(
                 Some(poll_url),
                 None,
                 None,
+                source_id,
             );
             let _ = db.upsert_generation(&record);
             Ok(record)
         }
         CreateOutcome::Done { image_bytes, ext } => {
-            let mut record =
-                new_generation(prompt, data_uri, provider_id, "pending", None, None, None);
+            let mut record = new_generation(
+                prompt, data_uri, provider_id, "pending", None, None, None, source_id,
+            );
             save_generated_image(db, &mut record, &image_bytes, &ext)?;
             Ok(record)
         }
@@ -170,6 +189,7 @@ fn save_generated_image(
 
     let entry = ImageEntry {
         path: filepath.to_string_lossy().to_string(),
+        id: uuid::Uuid::new_v4().to_string(),
         filename,
         created_at: now,
         size_bytes: bytes.len() as u64,
@@ -276,6 +296,7 @@ pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String
 
     let entry = ImageEntry {
         path: filepath.to_string_lossy().to_string(),
+        id: uuid::Uuid::new_v4().to_string(),
         filename,
         created_at: now,
         size_bytes: bytes.len() as u64,
@@ -288,6 +309,11 @@ pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ImageEntry {
     pub path: String,
+    /// Stable uuid identifying this image independently of its file path. Used as
+    /// the target of a generation's `source_id` so children can be listed per
+    /// source. Backfilled for pre-existing rows (see `Db::backfill_image_ids`).
+    #[serde(default)]
+    pub id: String,
     pub filename: String,
     pub created_at: i64,
     pub size_bytes: u64,
@@ -322,6 +348,11 @@ pub struct Generation {
     pub poll_url: Option<String>,
     pub output_path: Option<String>,
     pub error: Option<String>,
+    /// The `id` of the image this was generated from, when known. Lets the UI
+    /// list a source image's direct children. `None` for legacy rows created
+    /// before source tracking existed.
+    #[serde(default)]
+    pub source_id: Option<String>,
     pub created_at: i64,
 }
 
@@ -334,6 +365,7 @@ fn new_generation(
     poll_url: Option<String>,
     output_path: Option<String>,
     error: Option<String>,
+    source_id: Option<&str>,
 ) -> Generation {
     let created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -349,6 +381,7 @@ fn new_generation(
         poll_url,
         output_path,
         error,
+        source_id: source_id.map(|s| s.to_string()),
         created_at,
     }
 }

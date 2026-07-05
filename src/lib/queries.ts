@@ -11,6 +11,9 @@ export interface AssetsData {
   images: ImageEntry[];
   /** Generations keyed by their output image path, for the source-prompt lookup. */
   gens: Record<string, Generation>;
+  /** Generations grouped by their source image id, for listing a source image's
+   *  direct children (variants) in the detail panel. Oldest first. */
+  childrenBySource: Record<string, Generation[]>;
   /** Generations still running, shown as in-progress placeholder tiles. */
   pending: Generation[];
 }
@@ -36,11 +39,17 @@ async function fetchAssets(): Promise<AssetsData> {
   const images = await getImages();
 
   const gens: Record<string, Generation> = {};
+  const childrenBySource: Record<string, Generation[]> = {};
   for (const g of generations) {
     if (g.output_path) gens[g.output_path] = g;
+    if (g.source_id) (childrenBySource[g.source_id] ??= []).push(g);
+  }
+  // Oldest first, so variants read in the order they were generated.
+  for (const list of Object.values(childrenBySource)) {
+    list.sort((a, b) => a.created_at - b.created_at);
   }
   const pending = generations.filter((g) => g.status === "pending");
-  return { images, gens, pending };
+  return { images, gens, childrenBySource, pending };
 }
 
 /** The asset library query. Shared by the route loader (which prefetches it to

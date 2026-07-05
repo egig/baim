@@ -273,6 +273,126 @@ const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
   );
 });
 
+/** A generated variant shown in the detail panel's lineage section. Succeeded →
+ *  clickable thumbnail (opens that variant); pending → spinner over the dimmed
+ *  source; failed → a warning tile carrying the error message. */
+const VariantTile = memo(function VariantTile({
+  gen,
+  onOpen,
+}: {
+  gen: Generation;
+  onOpen: (path: string) => void;
+}) {
+  const clickable = gen.status === "succeeded" && !!gen.output_path;
+  return (
+    <div
+      onClick={clickable ? () => onOpen(gen.output_path!) : undefined}
+      title={gen.status === "failed" ? gen.error ?? "Gagal" : gen.prompt}
+      style={{
+        position: "relative",
+        aspectRatio: "1",
+        borderRadius: "var(--r-card)",
+        overflow: "hidden",
+        border: "1px solid var(--line-3)",
+        background: "var(--fill-1)",
+        cursor: clickable ? "pointer" : "default",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {gen.status === "succeeded" && gen.output_path && (
+        <img
+          src={convertFileSrc(gen.output_path)}
+          alt=""
+          loading="lazy"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      )}
+      {gen.status === "pending" && (
+        <>
+          {gen.input_data_uri && (
+            <img
+              src={gen.input_data_uri}
+              alt=""
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                opacity: 0.35,
+              }}
+            />
+          )}
+          <svg
+            className="assets-spin"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            style={{ color: "var(--indigo-500)", position: "relative" }}
+          >
+            <path
+              d="M21 12a9 9 0 1 1-6.219-8.56"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </>
+      )}
+      {gen.status === "failed" && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
+            padding: 6,
+            textAlign: "center",
+          }}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            style={{ color: "#dc2626" }}
+          >
+            <path
+              d="M12 3.5l9 16H3l9-16Z M12 10v4 M12 17.4v.1"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span
+            style={{
+              fontSize: 9.5,
+              lineHeight: 1.25,
+              color: "#b91c1c",
+              overflow: "hidden",
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+            }}
+          >
+            {gen.error ?? "Gagal"}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});
+
 /** A single image rendered as a detailed row for the list view: thumbnail,
  *  filename with a Sumber/AI origin badge, and a metadata line. */
 const ImageRow = memo(function ImageRow({
@@ -481,9 +601,10 @@ export default function Assets() {
 
   const qc = useQueryClient();
   const { data } = useQuery(assetsQuery);
-  const { images, gens, pending } = data ?? {
+  const { images, gens, childrenBySource, pending } = data ?? {
     images: [],
     gens: {},
+    childrenBySource: {},
     pending: [],
   };
 
@@ -617,7 +738,7 @@ export default function Assets() {
       // Fire the prediction in async mode and return immediately. The backend
       // records it as `pending`; the frontend does not block until it's done.
       // The API key is read from the backend settings, not passed from here.
-      await createPrediction(src, variantPrompt.trim(), providerId);
+      await createPrediction(src, variantPrompt.trim(), providerId, selectedImage?.id);
       await refresh();
       setVariantOpen(false);
       setVariantPrompt("");
@@ -644,7 +765,7 @@ export default function Assets() {
         selectedTemplates.has(t.id)
       ).map((t) => t.prompt);
       // One backend call fans out into one pending generation per template.
-      await createPredictions(src, prompts, providerId);
+      await createPredictions(src, prompts, providerId, selectedImage?.id);
       await refresh();
       setSelectedTemplates(new Set());
       setVariantOpen(false);
@@ -689,6 +810,18 @@ export default function Assets() {
         prompt: gens[selectedImage.path]?.prompt,
       }
       : null;
+
+  // Direct children: generations made with the selected image as their source.
+  const children = selectedImage
+    ? childrenBySource[selectedImage.id] ?? []
+    : [];
+
+  // The source (parent) image this one was generated from, when the selected
+  // image is itself a generation output and its source still exists.
+  const sourceGen = selectedImage ? gens[selectedImage.path] : undefined;
+  const sourceImage = sourceGen?.source_id
+    ? images.find((i) => i.id === sourceGen.source_id) ?? null
+    : null;
 
   const generateDisabled = generating || !variantPrompt.trim();
   const generateLabel = generating ? "Menghasilkan…" : "Hasilkan varian";
@@ -1005,28 +1138,109 @@ export default function Assets() {
                   </DetailRow>
                 </div>
 
-                {detail.prompt && (
+                {(sourceImage || detail.prompt) && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      display: "flex",
+                      flexDirection: "row",
+                      gap: 12,
+                      padding: 12,
+                      borderRadius: "var(--r-control)",
+                      border: "1px solid var(--line-3)",
+                      background: "var(--fill-1)",
+                    }}
+                  >
+                    {sourceImage && (
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--ink-500)",
+                            marginBottom: 7,
+                          }}
+                        >
+                          Sumber
+                        </div>
+                        <div
+                          onClick={() => selectAsset(sourceImage.path)}
+                          title={sourceImage.filename}
+                          style={{
+                            position: "relative",
+                            width: 72,
+                            height: 72,
+                            borderRadius: "var(--r-card)",
+                            overflow: "hidden",
+                            border: "1px solid var(--line-3)",
+                            background: "var(--fill-2, var(--fill-1))",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <img
+                            src={convertFileSrc(sourceImage.path)}
+                            alt={sourceImage.filename}
+                            loading="lazy"
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {detail.prompt && (
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--ink-500)",
+                            marginBottom: 5,
+                          }}
+                        >
+                          Prompt asal
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: "var(--ink-700)",
+                            lineHeight: 1.45,
+                            background: "var(--indigo-100)",
+                            borderRadius: "var(--r-control)",
+                            padding: "8px 10px",
+                          }}
+                        >
+                          {detail.prompt}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {children.length > 0 && (
                   <div style={{ marginTop: 14 }}>
                     <div
                       style={{
                         fontSize: 11.5,
                         color: "var(--ink-500)",
-                        marginBottom: 5,
+                        marginBottom: 7,
                       }}
                     >
-                      Prompt asal
+                      Varian dihasilkan
                     </div>
                     <div
                       style={{
-                        fontSize: 12,
-                        color: "var(--ink-700)",
-                        lineHeight: 1.45,
-                        background: "var(--indigo-100)",
-                        borderRadius: "var(--r-control)",
-                        padding: "8px 10px",
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: 8,
                       }}
                     >
-                      {detail.prompt}
+                      {children.map((g) => (
+                        <VariantTile key={g.id} gen={g} onOpen={selectAsset} />
+                      ))}
                     </div>
                   </div>
                 )}

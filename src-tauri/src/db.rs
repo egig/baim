@@ -42,6 +42,7 @@ impl Db {
             "
             CREATE TABLE IF NOT EXISTS images (
                 path TEXT PRIMARY KEY,
+                id TEXT,
                 filename TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 size_bytes INTEGER NOT NULL
@@ -55,6 +56,7 @@ impl Db {
                 poll_url TEXT,
                 output_path TEXT,
                 error TEXT,
+                source_id TEXT,
                 created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS settings (
@@ -65,14 +67,56 @@ impl Db {
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
-        // Migration for pre-provider databases: add the column if it's missing.
+        // Migrations for pre-existing databases: add columns if they're missing.
         // `ALTER TABLE ... ADD COLUMN` errors when the column already exists, so
-        // ignore that (idempotent) failure.
+        // ignore that (idempotent) failure. These must run before the index below,
+        // since on an existing DB the `CREATE TABLE IF NOT EXISTS` above is a no-op
+        // and doesn't add the new columns.
         let _ = conn.execute(
             "ALTER TABLE generations ADD COLUMN provider TEXT NOT NULL DEFAULT 'replicate'",
             [],
         );
+        let _ = conn.execute("ALTER TABLE images ADD COLUMN id TEXT", []);
+        let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
 
+        // Index on the source link, created after the column is guaranteed to exist.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_generations_source ON generations(source_id)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create index: {}", e))?;
+
+        // Backfill stable ids for image rows created before the `id` column
+        // existed. rusqlite has no SQL uuid function, so generate one per row in
+        // Rust. New generations only reference images by this id, so old rows need
+        // one to be linkable as a source going forward.
+        Self::backfill_image_ids(conn)?;
+
+        Ok(())
+    }
+
+    /// Assign a fresh uuid to every image row still missing an `id` (post-migration
+    /// backfill). Idempotent: rows that already have an id are left untouched.
+    fn backfill_image_ids(conn: &Connection) -> Result<(), String> {
+        let paths: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT path FROM images WHERE id IS NULL OR id = ''")
+                .map_err(|e| format!("Failed to prepare backfill query: {}", e))?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("Failed to query images for backfill: {}", e))?
+                .filter_map(|r| r.ok())
+                .collect();
+            rows
+        };
+        for path in paths {
+            let id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "UPDATE images SET id = ?1 WHERE path = ?2",
+                params![id, path],
+            )
+            .map_err(|e| format!("Failed to backfill image id: {}", e))?;
+        }
         Ok(())
     }
 
@@ -185,8 +229,8 @@ impl Db {
     pub fn insert_image(&self, entry: &ImageEntry) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT OR IGNORE INTO images (path, filename, created_at, size_bytes) VALUES (?1, ?2, ?3, ?4)",
-            params![entry.path, entry.filename, entry.created_at, entry.size_bytes],
+            "INSERT OR IGNORE INTO images (path, id, filename, created_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![entry.path, entry.id, entry.filename, entry.created_at, entry.size_bytes],
         )
         .map_err(|e| format!("Failed to insert image: {}", e))?;
         Ok(())
@@ -203,7 +247,7 @@ impl Db {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT path, filename, created_at, size_bytes FROM images ORDER BY created_at DESC",
+                "SELECT path, id, filename, created_at, size_bytes FROM images ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -211,9 +255,10 @@ impl Db {
             .query_map([], |row| {
                 Ok(ImageEntry {
                     path: row.get(0)?,
-                    filename: row.get(1)?,
-                    created_at: row.get(2)?,
-                    size_bytes: row.get::<_, i64>(3)? as u64,
+                    id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    filename: row.get(2)?,
+                    created_at: row.get(3)?,
+                    size_bytes: row.get::<_, i64>(4)? as u64,
                 })
             })
             .map_err(|e| format!("Failed to query images: {}", e))?
@@ -226,8 +271,8 @@ impl Db {
     pub fn upsert_generation(&self, gen: &Generation) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 poll_url = excluded.poll_url,
@@ -242,6 +287,7 @@ impl Db {
                 gen.poll_url,
                 gen.output_path,
                 gen.error,
+                gen.source_id,
                 gen.created_at,
             ],
         )
@@ -252,7 +298,7 @@ impl Db {
     pub fn load_generation(&self, id: &str) -> Option<Generation> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at
+            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at
              FROM generations WHERE id = ?1",
             params![id],
             |row| {
@@ -265,7 +311,8 @@ impl Db {
                     poll_url: row.get(5)?,
                     output_path: row.get(6)?,
                     error: row.get(7)?,
-                    created_at: row.get(8)?,
+                    source_id: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             },
         )
@@ -283,7 +330,7 @@ impl Db {
             .prepare(
                 "SELECT id, prompt,
                         CASE WHEN status = 'pending' THEN input_data_uri ELSE '' END AS input_data_uri,
-                        provider, status, poll_url, output_path, error, created_at
+                        provider, status, poll_url, output_path, error, source_id, created_at
                  FROM generations ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -299,7 +346,8 @@ impl Db {
                     poll_url: row.get(5)?,
                     output_path: row.get(6)?,
                     error: row.get(7)?,
-                    created_at: row.get(8)?,
+                    source_id: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })
             .map_err(|e| format!("Failed to query generations: {}", e))?
@@ -374,6 +422,7 @@ impl Db {
 
                     let image_entry = ImageEntry {
                         path: path.to_string_lossy().to_string(),
+                        id: uuid::Uuid::new_v4().to_string(),
                         filename: path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
