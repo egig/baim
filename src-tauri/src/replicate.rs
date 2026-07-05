@@ -203,6 +203,46 @@ fn get_images_dir() -> Result<std::path::PathBuf, String> {
     Ok(home.join("Pictures").join("catalog-gen"))
 }
 
+/// Delete a saved image file and its associated generation sidecar.
+/// The path is canonicalized and required to sit directly inside the images
+/// directory, so a path coming back from the frontend can't remove the
+/// `generations` sidecars or escape the directory via `..`/symlinks and
+/// delete arbitrary files.
+pub fn delete_image(path: &str) -> Result<(), String> {
+    let canonical_dir = get_images_dir()?
+        .canonicalize()
+        .map_err(|e| format!("Images directory unavailable: {}", e))?;
+    let canonical_target = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("Image not found: {}", e))?;
+
+    // Must be a file living directly in the images dir (not the generations
+    // subdirectory, not anything outside the scope).
+    if canonical_target.parent() != Some(canonical_dir.as_path()) {
+        return Err("Refusing to delete a file outside the images directory".to_string());
+    }
+
+    let path_str = canonical_target.to_string_lossy().to_string();
+
+    std::fs::remove_file(&canonical_target).map_err(|e| format!("Failed to delete image: {}", e))?;
+
+    // Clean up the corresponding generation sidecar, if any.
+    if let Ok(gens) = list_generations() {
+        for gen in gens {
+            if gen.output_path.as_deref() == Some(&path_str) {
+                if is_safe_id(&gen.id) {
+                    if let Ok(dir) = get_generations_dir() {
+                        let _ = std::fs::remove_file(dir.join(format!("{}.json", gen.id)));
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn list_saved_images() -> Result<Vec<ImageEntry>, String> {
     let dir = get_images_dir()?;
     if !dir.exists() {

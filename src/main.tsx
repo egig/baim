@@ -4,16 +4,14 @@ import { createBrowserRouter, RouterProvider } from "react-router";
 import "./index.css";
 import Root from "./root";
 import Setup from "./routes/setup";
-import Generate from "./routes/generate";
-import Gallery from "./routes/gallery";
+import Assets from "./routes/assets";
 
 const router = createBrowserRouter([
   {
     element: <Root />,
     children: [
       { path: "/", element: <Setup /> },
-      { path: "/generate", element: <Generate /> },
-      { path: "/gallery", element: <Gallery /> },
+      { path: "/assets", element: <Assets /> },
     ],
   },
 ]);

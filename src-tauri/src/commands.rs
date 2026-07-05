@@ -24,3 +24,8 @@ pub fn get_images() -> Result<Vec<ImageEntry>, String> {
 pub fn get_generations() -> Result<Vec<Generation>, String> {
     replicate::list_generations()
 }
+
+#[tauri::command]
+pub fn delete_image(path: String) -> Result<(), String> {
+    replicate::delete_image(&path)
+}

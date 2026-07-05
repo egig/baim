@@ -1,0 +1,792 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import {
+  getImages,
+  getGenerations,
+  createPrediction,
+  refreshGeneration,
+  deleteImage,
+  type ImageEntry,
+  type Generation,
+} from "../lib/tauri";
+import { Button } from "../root";
+
+const STORAGE_KEY = "replicate_api_key";
+
+// ---------- helpers ----------
+
+type Dims = { w: number; h: number };
+type Staged = { dataUri: string; name: string; w: number; h: number; size: number };
+
+function fmtSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1).replace(".", ",") + " MB";
+  }
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+function fmtDate(seconds: number): string {
+  if (!seconds) return "—";
+  return new Date(seconds * 1000).toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function kindOf(filename: string): string {
+  const m = filename.match(/\.([^.]+)$/);
+  return (m ? m[1] : "IMG").toUpperCase();
+}
+
+/** Read a saved image file's bytes back as a data URI, losslessly, so it can be
+ *  sent to Replicate as the source for a new variant. */
+async function assetToDataUri(path: string): Promise<string> {
+  const res = await fetch(convertFileSrc(path));
+  const blob = await res.blob();
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result as string);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+/** Normalize a picked file to a PNG data URI (matching the dropzone convention),
+ *  reading its natural dimensions and encoded size along the way. */
+function fileToStaged(file: File): Promise<Staged> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d")!.drawImage(img, 0, 0);
+      const dataUri = canvas.toDataURL("image/png");
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        resolve({
+          dataUri,
+          name: file.name.replace(/\.[^.]+$/, "") + ".png",
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+          size: blob?.size ?? Math.round((dataUri.length - 22) * 0.75),
+        });
+      }, "image/png");
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Gagal membaca gambar."));
+    };
+    img.src = url;
+  });
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Drive an async prediction to a terminal state by polling refresh_generation
+ *  (there is no background poll loop in this app — see CLAUDE.md). */
+async function pollUntilDone(id: string, key: string): Promise<Generation> {
+  for (let i = 0; i < 45; i++) {
+    const g = await refreshGeneration(id, key);
+    if (g.status !== "pending") return g;
+    await sleep(2000);
+  }
+  throw new Error("Waktu tunggu habis saat membuat varian.");
+}
+
+// ---------- route ----------
+
+export default function Assets() {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const [images, setImages] = useState<ImageEntry[]>([]);
+  const [gens, setGens] = useState<Record<string, Generation>>({});
+  const [dims, setDims] = useState<Record<string, Dims>>({});
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [staged, setStaged] = useState<Staged | null>(null);
+
+  const [variantOpen, setVariantOpen] = useState(false);
+  const [variantPrompt, setVariantPrompt] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const apiKey = localStorage.getItem(STORAGE_KEY);
+
+  async function load() {
+    const [imgs, generations] = await Promise.all([getImages(), getGenerations()]);
+    setImages(imgs);
+    const map: Record<string, Generation> = {};
+    for (const g of generations) {
+      if (g.output_path) map[g.output_path] = g;
+    }
+    setGens(map);
+    return imgs;
+  }
+
+  useEffect(() => {
+    load().catch((e) => setError(String(e)));
+  }, []);
+
+  function selectAsset(path: string) {
+    setSelectedPath(path);
+    setStaged(null);
+    setVariantOpen(false);
+    setVariantPrompt("");
+    setError(null);
+  }
+
+  function close() {
+    setSelectedPath(null);
+    setStaged(null);
+    setVariantOpen(false);
+    setVariantPrompt("");
+  }
+
+  function toggleVariant() {
+    setVariantOpen((v) => !v);
+    setVariantPrompt("");
+  }
+
+  function onUploadClick() {
+    fileRef.current?.click();
+  }
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !file.type.startsWith("image/")) return;
+    try {
+      const s = await fileToStaged(file);
+      setSelectedPath(null);
+      setStaged(s);
+      setVariantOpen(true);
+      setVariantPrompt("");
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  async function generate() {
+    if (generating) return;
+    const key = localStorage.getItem(STORAGE_KEY);
+    if (!key) {
+      setError("Kunci API Replicate belum diatur.");
+      return;
+    }
+    if (!variantPrompt.trim()) return;
+    if (!staged && !selectedPath) return;
+
+    setGenerating(true);
+    setError(null);
+    try {
+      const src = staged ? staged.dataUri : await assetToDataUri(selectedPath!);
+      const created = await createPrediction(src, variantPrompt.trim(), key);
+      const done = await pollUntilDone(created.id, key);
+      if (done.status === "succeeded" && done.output_path) {
+        await load();
+        setSelectedPath(done.output_path);
+        setStaged(null);
+        setVariantOpen(false);
+        setVariantPrompt("");
+      } else {
+        setError(done.error || "Gagal membuat varian.");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function del() {
+    if (!selectedPath || deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteImage(selectedPath);
+      await load();
+      setSelectedPath(null);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const selectedImage = selectedPath
+    ? images.find((i) => i.path === selectedPath) ?? null
+    : null;
+  const hasSelection = !!staged || !!selectedImage;
+
+  // Unified detail-panel view model for either a library asset or a staged upload.
+  const detail = staged
+    ? {
+        preview: staged.dataUri,
+        name: staged.name,
+        kind: "PNG",
+        dims: `${staged.w}×${staged.h}`,
+        sizeText: fmtSize(staged.size),
+        added: "Belum disimpan",
+        prompt: undefined as string | undefined,
+        isStaged: true,
+      }
+    : selectedImage
+      ? {
+          preview: convertFileSrc(selectedImage.path),
+          name: selectedImage.filename,
+          kind: kindOf(selectedImage.filename),
+          dims: dims[selectedImage.path]
+            ? `${dims[selectedImage.path].w}×${dims[selectedImage.path].h}`
+            : "…",
+          sizeText: fmtSize(selectedImage.size_bytes),
+          added: fmtDate(selectedImage.created_at),
+          prompt: gens[selectedImage.path]?.prompt,
+          isStaged: false,
+        }
+      : null;
+
+  const generateDisabled = generating || !variantPrompt.trim();
+  const generateLabel = generating ? "Menghasilkan…" : "Hasilkan varian";
+
+  return (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        onChange={onFilePicked}
+        style={{ display: "none" }}
+      />
+        <div
+          style={{
+            height: 52,
+            flexShrink: 0,
+            borderBottom: "1px solid var(--line-1)",
+            display: "flex",
+            alignItems: "center",
+            padding: "0 20px",
+            gap: 12,
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>Pustaka aset</div>
+          <span
+            style={{
+              minWidth: 18,
+              height: 18,
+              padding: "0 6px",
+              borderRadius: 9999,
+              background: "var(--fill-1)",
+              color: "var(--ink-500)",
+              fontSize: 11,
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {images.length}
+          </span>
+          <div style={{ flex: 1 }} />
+          <Link to="/" style={{ textDecoration: "none" }}>
+            <Button variant="ghost">Kunci API</Button>
+          </Link>
+          <Button variant="outline" onClick={onUploadClick}>
+            <svg width="14" height="14" viewBox="0 0 15 15">
+              <path
+                d="M7.5 9.6V2.4M4.6 5.1 7.5 2.2l2.9 2.9"
+                stroke="var(--ink-700)"
+                strokeWidth={1.3}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M2.6 9.4v2.2a1 1 0 0 0 1 1h7.8a1 1 0 0 0 1-1V9.4"
+                stroke="var(--ink-700)"
+                strokeWidth={1.3}
+                fill="none"
+                strokeLinecap="round"
+              />
+            </svg>
+            Unggah gambar
+          </Button>
+        </div>
+
+        {!apiKey && (
+          <div
+            style={{
+              padding: "9px 20px",
+              background: "var(--indigo-100)",
+              borderBottom: "1px solid var(--line-1)",
+              fontSize: 12,
+              color: "var(--ink-700)",
+            }}
+          >
+            Kunci API Replicate belum diatur — pembuatan varian butuh kunci.{" "}
+            <Link to="/" style={{ color: "var(--indigo-600)", fontWeight: 600 }}>
+              Atur sekarang
+            </Link>
+            .
+          </div>
+        )}
+
+        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+          {/* Grid */}
+          <div style={{ flex: 1, overflow: "auto", padding: "20px 22px 32px", minWidth: 0 }}>
+            {images.length === 0 ? (
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                  color: "var(--ink-400)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 13, color: "var(--ink-500)" }}>Belum ada aset.</div>
+                <div style={{ fontSize: 12 }}>
+                  Unggah gambar produk untuk membuat varian pertama.
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <Button variant="primary" onClick={onUploadClick}>
+                    Unggah gambar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill,minmax(98px,1fr))",
+                  gap: 10,
+                  alignContent: "start",
+                }}
+              >
+                {images.map((img) => {
+                  const selected = img.path === selectedPath;
+                  const d = dims[img.path];
+                  return (
+                    <div
+                      key={img.path}
+                      onClick={() => selectAsset(img.path)}
+                      style={{ cursor: "pointer", position: "relative" }}
+                    >
+                      <div
+                        style={{
+                          position: "relative",
+                          aspectRatio: "1",
+                          borderRadius: "var(--r-card)",
+                          overflow: "hidden",
+                          border: "1px solid var(--line-3)",
+                          background: "var(--fill-1)",
+                        }}
+                      >
+                        <img
+                          src={convertFileSrc(img.path)}
+                          alt={img.filename}
+                          loading="lazy"
+                          onLoad={(e) => {
+                            const el = e.currentTarget;
+                            setDims((prev) =>
+                              prev[img.path]
+                                ? prev
+                                : {
+                                    ...prev,
+                                    [img.path]: {
+                                      w: el.naturalWidth,
+                                      h: el.naturalHeight,
+                                    },
+                                  }
+                            );
+                          }}
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                          }}
+                        />
+                        <span
+                          style={{
+                            position: "absolute",
+                            bottom: 7,
+                            right: 7,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            letterSpacing: ".02em",
+                            padding: "2px 5px",
+                            borderRadius: "var(--r-badge-sm)",
+                            background: "rgba(255,255,255,.92)",
+                            color: "var(--ink-700)",
+                          }}
+                        >
+                          {kindOf(img.filename)}
+                        </span>
+                        {selected && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              border: "1.5px solid var(--indigo-500)",
+                              borderRadius: "var(--r-card)",
+                              boxShadow: "0 0 0 1.5px var(--indigo-100)",
+                            }}
+                          />
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 7,
+                          fontFamily: "var(--font-mono)",
+                          fontSize: 11.5,
+                          fontWeight: 500,
+                          color: "var(--ink-700)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {img.filename}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--ink-400)",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {d ? `${d.w}×${d.h}` : " "}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Detail panel */}
+          {hasSelection && detail && (
+            <div
+              style={{
+                flex: 1,
+                minWidth: 380,
+                borderLeft: "1px solid var(--line-1)",
+                background: "var(--surface-1)",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "auto",
+              }}
+            >
+              <div
+                style={{
+                  padding: "16px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid var(--line-1)",
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
+                  Detail aset
+                </span>
+                <div
+                  onClick={close}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    color: "var(--ink-400)",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12">
+                    <path
+                      d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+                      stroke="currentColor"
+                      strokeWidth={1.4}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+              </div>
+
+              <div style={{ padding: "16px 18px" }}>
+                <div
+                  style={{
+                    position: "relative",
+                    height: 230,
+                    borderRadius: "var(--r-card)",
+                    overflow: "hidden",
+                    border: "1px solid var(--line-3)",
+                    background: "var(--fill-1)",
+                  }}
+                >
+                  <img
+                    src={detail.preview}
+                    alt={detail.name}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                    }}
+                  />
+                  {detail.isStaged && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: 8,
+                        left: 8,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        padding: "2px 6px",
+                        borderRadius: "var(--r-badge)",
+                        color: "var(--indigo-600)",
+                        background: "rgba(255,255,255,.92)",
+                      }}
+                    >
+                      Unggahan baru
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--ink-900)",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {detail.name}
+                </div>
+
+                <div
+                  style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 9 }}
+                >
+                  <DetailRow label="Jenis">
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: ".02em",
+                        padding: "2px 5px",
+                        borderRadius: "var(--r-badge-sm)",
+                        color: "var(--indigo-600)",
+                        background: "var(--indigo-100)",
+                      }}
+                    >
+                      {detail.kind}
+                    </span>
+                  </DetailRow>
+                  <DetailRow label="Dimensi">
+                    <Mono>{detail.dims} px</Mono>
+                  </DetailRow>
+                  <DetailRow label="Ukuran">
+                    <Mono>{detail.sizeText}</Mono>
+                  </DetailRow>
+                  <DetailRow label="Ditambahkan">
+                    <Mono>{detail.added}</Mono>
+                  </DetailRow>
+                </div>
+
+                {detail.prompt && (
+                  <div style={{ marginTop: 14 }}>
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: "var(--ink-500)",
+                        marginBottom: 5,
+                      }}
+                    >
+                      Prompt asal
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--ink-700)",
+                        lineHeight: 1.45,
+                        background: "var(--indigo-100)",
+                        borderRadius: "var(--r-control)",
+                        padding: "8px 10px",
+                      }}
+                    >
+                      {detail.prompt}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ height: 1, background: "var(--line-1)", margin: "2px 0" }} />
+
+              {/* Variant generation */}
+              <div style={{ padding: "16px 18px" }}>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: ".04em",
+                    color: "var(--ink-350)",
+                    textTransform: "uppercase",
+                    marginBottom: 10,
+                  }}
+                >
+                  Buat varian
+                </div>
+
+                {variantOpen ? (
+                  <div>
+                    <textarea
+                      placeholder="Jelaskan perubahannya. mis. ganti latar jadi putih bersih, tambah bayangan lembut"
+                      value={variantPrompt}
+                      onChange={(e) => setVariantPrompt(e.target.value)}
+                      style={{
+                        width: "100%",
+                        minHeight: 74,
+                        resize: "none",
+                        border: "1px solid var(--line-4)",
+                        borderRadius: "var(--r-button)",
+                        padding: "10px 11px",
+                        fontFamily: "var(--font-ui)",
+                        fontSize: 12,
+                        color: "var(--ink-800)",
+                        lineHeight: 1.45,
+                        outline: "none",
+                        background: "var(--surface-0)",
+                      }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                      <Button variant="primary" disabled={generateDisabled} onClick={generate}>
+                        <svg width="14" height="14" viewBox="0 0 15 15">
+                          <path
+                            d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
+                            fill="#fff"
+                          />
+                        </svg>
+                        {generateLabel}
+                      </Button>
+                      <Button variant="ghost" disabled={generating} onClick={toggleVariant}>
+                        Batal
+                      </Button>
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 9,
+                        fontSize: 11,
+                        color: "var(--ink-400)",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Varian disimpan sebagai aset baru dan ditautkan ke gambar sumber.
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onClick={toggleVariant}
+                    style={{
+                      border: "1px dashed var(--line-5)",
+                      borderRadius: "var(--r-button)",
+                      padding: "13px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      cursor: "pointer",
+                      background: "var(--indigo-100)",
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 15 15">
+                      <path
+                        d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
+                        fill="var(--indigo-500)"
+                      />
+                    </svg>
+                    <div style={{ flex: 1, lineHeight: 1.3 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--indigo-600)" }}>
+                        Buat varian dengan prompt
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--ink-500)" }}>
+                        Hasilkan versi baru dari teks
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {error && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      fontSize: 11.5,
+                      color: "var(--red-600)",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {error}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ flex: 1 }} />
+
+              {!detail.isStaged && (
+                <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line-1)" }}>
+                  <Button variant="danger" disabled={deleting} onClick={del}>
+                    <svg width="14" height="14" viewBox="0 0 15 15">
+                      <path
+                        d="M3 4h9M6 4V2.8h3V4M4.2 4l.6 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.6-8"
+                        stroke="var(--red-600)"
+                        strokeWidth={1.2}
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    {deleting ? "Menghapus…" : "Hapus aset"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+    </>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <span style={{ fontSize: 11.5, color: "var(--ink-500)" }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function Mono({ children }: { children: ReactNode }) {
+  return (
+    <span
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 11.5,
+        color: "var(--ink-700)",
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {children}
+    </span>
+  );
+}

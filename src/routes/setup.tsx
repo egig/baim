@@ -2,6 +2,87 @@ import { useState } from "react";
 
 const STORAGE_KEY = "replicate_api_key";
 
+const styles = {
+  card: {
+    maxWidth: 480,
+    margin: "40px auto",
+    padding: "24px 28px",
+    background: "var(--surface-0)",
+    border: "1px solid var(--line-3)",
+    borderRadius: "var(--r-window)",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 18,
+  },
+  heading: {
+    fontSize: 16,
+    fontWeight: 600,
+    color: "var(--ink-900)",
+  },
+  sub: {
+    fontSize: 12,
+    color: "var(--ink-500)",
+    lineHeight: 1.45,
+    margin: 0,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--ink-700)",
+    marginBottom: 6,
+    display: "block",
+  },
+  input: {
+    width: "100%",
+    padding: "9px 11px",
+    border: "1px solid var(--line-4)",
+    borderRadius: "var(--r-control)",
+    fontSize: 13,
+    fontFamily: "var(--font-mono)",
+    color: "var(--ink-800)",
+    background: "var(--surface-0)",
+    outline: "none",
+    boxSizing: "border-box" as const,
+  },
+  row: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+  },
+  btn: {
+    height: 34,
+    padding: "0 16px",
+    borderRadius: "var(--r-button)",
+    fontSize: 12.5,
+    fontWeight: 600,
+    border: "1px solid transparent",
+    cursor: "pointer",
+    transition: "background .12s",
+  },
+  btnPrimary: {
+    background: "var(--indigo-500)",
+    color: "#fff",
+  },
+  btnPrimaryDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+  btnOutline: {
+    background: "var(--surface-0)",
+    borderColor: "var(--line-4)",
+    color: "var(--ink-700)",
+  },
+  footer: {
+    fontSize: 11.5,
+    color: "var(--ink-400)",
+  },
+  link: {
+    color: "var(--indigo-500)",
+    fontWeight: 600,
+    textDecoration: "none",
+  },
+};
+
 export default function Setup() {
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem(STORAGE_KEY) ?? ""
@@ -21,22 +102,17 @@ export default function Setup() {
   }
 
   return (
-    <div className="max-w-lg mx-auto space-y-6">
+    <div style={styles.card}>
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">
-          Replicate API Key
-        </h2>
-        <p className="text-sm text-gray-400">
+        <div style={styles.heading}>Replicate API Key</div>
+        <p style={styles.sub}>
           Your key is stored locally in your browser and never sent anywhere
           except directly to Replicate's API.
         </p>
       </div>
 
-      <div className="space-y-3">
-        <label
-          htmlFor="api-key"
-          className="block text-sm font-medium text-gray-300"
-        >
+      <div>
+        <label htmlFor="api-key" style={styles.label}>
           API Key
         </label>
         <input
@@ -45,37 +121,41 @@ export default function Setup() {
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
           placeholder="r8_..."
-          className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          style={styles.input}
         />
       </div>
 
-      <div className="flex gap-3">
+      <div style={styles.row}>
         <button
           onClick={handleSave}
           disabled={!apiKey.trim()}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={{
+            ...styles.btn,
+            ...styles.btnPrimary,
+            ...(apiKey.trim() ? {} : styles.btnPrimaryDisabled),
+          }}
         >
           {saved ? "Saved!" : "Save"}
         </button>
         <button
           onClick={handleClear}
-          className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+          style={{ ...styles.btn, ...styles.btnOutline }}
         >
           Clear
         </button>
       </div>
 
-      <p className="text-xs text-gray-500">
+      <div style={styles.footer}>
         Don't have a key?{" "}
         <a
           href="https://replicate.com/account/api-tokens"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-blue-400 hover:text-blue-300"
+          style={styles.link}
         >
           Get one from Replicate
         </a>
-      </p>
+      </div>
     </div>
   );
 }

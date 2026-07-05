@@ -19,6 +19,7 @@ pub fn run() {
             commands::refresh_generation,
             commands::get_images,
             commands::get_generations,
+            commands::delete_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

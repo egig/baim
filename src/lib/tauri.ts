@@ -30,6 +30,10 @@ export async function getImages(): Promise<ImageEntry[]> {
   return invoke<ImageEntry[]>("get_images");
 }
 
+export async function deleteImage(path: string): Promise<void> {
+  return invoke<void>("delete_image", { path });
+}
+
 export interface Generation {
   id: string;
   prompt: string;

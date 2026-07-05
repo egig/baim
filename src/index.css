@@ -3,9 +3,68 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, sans-serif;
-  @apply bg-gray-950 text-gray-100;
+  background: #fff;
+  color: #191b1f;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Design tokens for the asset library (routes/assets.tsx).
+   Scoped to .assets-app so they never leak into the setup route. */
+.assets-app {
+  --font-ui: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --surface-0: #ffffff;
+  --surface-1: #fbfbfc;
+  --surface-2: #f7f8f9;
+  --line-1: #ecedf0;
+  --line-3: #e4e6ea;
+  --line-4: #d9dce2;
+  --line-5: #cdd1d8;
+  --fill-1: #f0f1f4;
+  --ink-900: #191b1f;
+  --ink-800: #2a2d33;
+  --ink-700: #3c4149;
+  --ink-500: #6b7280;
+  --ink-400: #9096a0;
+  --ink-350: #a6abb4;
+  --indigo-600: #4b52c4;
+  --indigo-500: #5e6ad2;
+  --indigo-100: #edeefb;
+  --red-600: #d1453b;
+  --vendor-violet: #6b4fbb;
+  --vendor-violet-bg: #efeafc;
+  --r-window: 12px;
+  --r-card: 8px;
+  --r-button: 8px;
+  --r-control: 6px;
+  --r-badge: 5px;
+  --r-badge-sm: 4px;
+  --shadow-window: 0 12px 40px rgba(15, 17, 26, 0.12);
+
+  font-family: var(--font-ui);
+  color: var(--ink-800);
+  -webkit-font-smoothing: antialiased;
+}
+
+.assets-app *,
+.assets-app *::before,
+.assets-app *::after {
+  box-sizing: border-box;
+}
+
+.assets-app ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.assets-app ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.assets-app ::-webkit-scrollbar-track {
+  background: transparent;
 }
