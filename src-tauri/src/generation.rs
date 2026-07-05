@@ -15,9 +15,8 @@ pub async fn create_prediction(
     data_uri: &str,
     prompt: &str,
     provider_id: &str,
-    api_key: &str,
 ) -> Result<Generation, String> {
-    match do_create(db, data_uri, prompt, provider_id, api_key).await {
+    match do_create(db, data_uri, prompt, provider_id).await {
         Ok(gen) => Ok(gen),
         Err(err) => {
             let record = new_generation(
@@ -40,16 +39,19 @@ async fn do_create(
     data_uri: &str,
     prompt: &str,
     provider_id: &str,
-    api_key: &str,
 ) -> Result<Generation, String> {
     let provider =
         get_provider(provider_id).ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+
+    let api_key = db
+        .read_api_key(provider_id)
+        .ok_or_else(|| format!("No API key set for {}", provider_id))?;
 
     let outcome = provider
         .create(GenerateRequest {
             prompt: prompt.to_string(),
             image_data_uri: data_uri.to_string(),
-            api_key: api_key.to_string(),
+            api_key,
         })
         .await?;
 
@@ -79,7 +81,7 @@ async fn do_create(
 /// Poll a stored `pending` generation once and advance it if the provider has
 /// reached a terminal state. Downloads and saves the image on success. Records
 /// that are already terminal are returned unchanged.
-pub async fn refresh_generation(db: &Db, id: &str, api_key: &str) -> Result<Generation, String> {
+pub async fn refresh_generation(db: &Db, id: &str) -> Result<Generation, String> {
     let mut record = db.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
@@ -89,12 +91,16 @@ pub async fn refresh_generation(db: &Db, id: &str, api_key: &str) -> Result<Gene
     let provider = get_provider(&record.provider)
         .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
 
+    let api_key = db
+        .read_api_key(&record.provider)
+        .ok_or_else(|| format!("No API key set for {}", record.provider))?;
+
     let poll_url = record
         .poll_url
         .clone()
         .ok_or("This generation has no poll URL to refresh")?;
 
-    match provider.poll(&poll_url, api_key).await? {
+    match provider.poll(&poll_url, &api_key).await? {
         PollOutcome::Pending => {}
         PollOutcome::Done { image_bytes, ext } => {
             save_generated_image(db, &mut record, &image_bytes, &ext)?;

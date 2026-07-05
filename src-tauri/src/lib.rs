@@ -58,6 +58,8 @@ pub fn run() {
             commands::list_providers,
             commands::get_active_provider,
             commands::set_active_provider,
+            commands::has_api_key,
+            commands::set_api_key,
             commands::get_images,
             commands::get_generations,
             commands::delete_image,

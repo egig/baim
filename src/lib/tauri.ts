@@ -10,22 +10,17 @@ export interface ImageEntry {
 export async function createPrediction(
   dataUri: string,
   prompt: string,
-  provider: string,
-  apiKey: string
+  provider: string
 ): Promise<Generation> {
   return invoke<Generation>("create_prediction", {
     dataUri,
     prompt,
     provider,
-    apiKey,
   });
 }
 
-export async function refreshGeneration(
-  id: string,
-  apiKey: string
-): Promise<Generation> {
-  return invoke<Generation>("refresh_generation", { id, apiKey });
+export async function refreshGeneration(id: string): Promise<Generation> {
+  return invoke<Generation>("refresh_generation", { id });
 }
 
 export async function getImages(): Promise<ImageEntry[]> {
@@ -74,10 +69,18 @@ export async function setActiveProvider(id: string): Promise<void> {
   return invoke<void>("set_active_provider", { id });
 }
 
-/** localStorage key holding a given provider's API key. `replicate` keeps its
- *  historical `replicate_api_key` value so existing keys need no migration. */
-export function apiKeyStorageKey(providerId: string): string {
-  return `${providerId}_api_key`;
+/** Whether the given provider has an API key saved in the backend. The key
+ *  value itself never leaves the backend. */
+export async function hasApiKey(providerId: string): Promise<boolean> {
+  return invoke<boolean>("has_api_key", { provider: providerId });
+}
+
+/** Persist (or, with an empty string, clear) a provider's API key. */
+export async function setApiKey(
+  providerId: string,
+  key: string
+): Promise<void> {
+  return invoke<void>("set_api_key", { provider: providerId, key });
 }
 
 export async function saveImage(dataUri: string): Promise<ImageEntry> {

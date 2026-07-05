@@ -6,7 +6,8 @@ import {
   listProviders,
   getActiveProvider,
   setActiveProvider,
-  apiKeyStorageKey,
+  hasApiKey,
+  setApiKey as saveApiKey,
   type ProviderInfo,
 } from "../lib/tauri";
 
@@ -175,22 +176,48 @@ function ProviderSection({
 }
 
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
-  const storageKey = apiKeyStorageKey(provider.id);
-  const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem(storageKey) ?? ""
-  );
+  const [apiKey, setApiKey] = useState("");
+  const [stored, setStored] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSave() {
+  useEffect(() => {
+    let cancelled = false;
+    setApiKey("");
+    setStored(false);
+    hasApiKey(provider.id)
+      .then((has) => {
+        if (!cancelled) setStored(has);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [provider.id]);
+
+  async function handleSave() {
     if (!apiKey.trim()) return;
-    localStorage.setItem(storageKey, apiKey.trim());
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setError(null);
+    try {
+      await saveApiKey(provider.id, apiKey.trim());
+      setApiKey("");
+      setStored(true);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
-  function handleClear() {
-    localStorage.removeItem(storageKey);
-    setApiKey("");
+  async function handleClear() {
+    setError(null);
+    try {
+      await saveApiKey(provider.id, "");
+      setApiKey("");
+      setStored(false);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   return (
@@ -198,7 +225,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
       <div>
         <div style={styles.heading}>{provider.label} API Key</div>
         <p style={styles.sub}>
-          Your key is stored locally in your browser and never sent anywhere
+          Your key is stored locally on this machine and never sent anywhere
           except directly to {provider.label}'s API.
         </p>
       </div>
@@ -212,7 +239,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={provider.key_hint}
+          placeholder={stored ? "•••••••• (saved)" : provider.key_hint}
           style={styles.input}
         />
       </div>
@@ -231,11 +258,18 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
         </button>
         <button
           onClick={handleClear}
-          style={{ ...styles.btn, ...styles.btnOutline }}
+          disabled={!stored}
+          style={{
+            ...styles.btn,
+            ...styles.btnOutline,
+            ...(stored ? {} : styles.btnPrimaryDisabled),
+          }}
         >
           Clear
         </button>
       </div>
+
+      {error && <p style={styles.error}>{error}</p>}
 
       <div style={styles.footer}>
         Don't have a key?{" "}

@@ -11,6 +11,12 @@ const STORAGE_DIR_KEY: &str = "storage_dir";
 /// `settings` key under which the globally-selected image provider is stored.
 const ACTIVE_PROVIDER_KEY: &str = "active_provider";
 
+/// `settings` key holding a given provider's API key. Matches the historical
+/// per-provider naming (`<provider_id>_api_key`, e.g. `replicate_api_key`).
+fn api_key_setting_key(provider_id: &str) -> String {
+    format!("{}_api_key", provider_id)
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     /// The directory image files live in. Loaded from the `settings` table on
@@ -138,6 +144,41 @@ impl Db {
             params![ACTIVE_PROVIDER_KEY, id],
         )
         .map_err(|e| format!("Failed to save active provider: {}", e))?;
+        Ok(())
+    }
+
+    /// The stored API key for a provider, if one has been saved and is
+    /// non-empty. Returned to the settings UI and read on every generation.
+    pub fn read_api_key(&self, provider_id: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![api_key_setting_key(provider_id)],
+                |row| row.get(0),
+            )
+            .ok();
+        stored.filter(|s| !s.is_empty())
+    }
+
+    /// Persist a provider's API key. An empty/whitespace-only key clears it.
+    pub fn set_api_key(&self, provider_id: &str, key: &str) -> Result<(), String> {
+        let key = key.trim();
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        if key.is_empty() {
+            conn.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                params![api_key_setting_key(provider_id)],
+            )
+            .map_err(|e| format!("Failed to clear API key: {}", e))?;
+        } else {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![api_key_setting_key(provider_id), key],
+            )
+            .map_err(|e| format!("Failed to save API key: {}", e))?;
+        }
         Ok(())
     }
 

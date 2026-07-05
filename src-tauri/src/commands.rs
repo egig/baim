@@ -11,18 +11,33 @@ pub async fn create_prediction(
     data_uri: String,
     prompt: String,
     provider: String,
-    api_key: String,
 ) -> Result<Generation, String> {
-    generation::create_prediction(&*state, &data_uri, &prompt, &provider, &api_key).await
+    generation::create_prediction(&*state, &data_uri, &prompt, &provider).await
 }
 
 #[tauri::command]
 pub async fn refresh_generation(
     state: tauri::State<'_, Db>,
     id: String,
-    api_key: String,
 ) -> Result<Generation, String> {
-    generation::refresh_generation(&*state, &id, &api_key).await
+    generation::refresh_generation(&*state, &id).await
+}
+
+/// Whether the given provider has an API key saved (the value is never returned
+/// to the frontend; only its presence).
+#[tauri::command]
+pub fn has_api_key(state: tauri::State<'_, Db>, provider: String) -> bool {
+    state.read_api_key(&provider).is_some()
+}
+
+/// Persist (or, with an empty string, clear) a provider's API key.
+#[tauri::command]
+pub fn set_api_key(
+    state: tauri::State<'_, Db>,
+    provider: String,
+    key: String,
+) -> Result<(), String> {
+    state.set_api_key(&provider, &key)
 }
 
 /// The image providers the app knows about, for the settings dropdown and

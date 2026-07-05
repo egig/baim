@@ -12,7 +12,7 @@ import {
   saveImage,
   getActiveProvider,
   listProviders,
-  apiKeyStorageKey,
+  hasApiKey,
   type ImageEntry,
 } from "../lib/tauri";
 import { assetsQuery } from "../lib/queries";
@@ -224,7 +224,14 @@ export default function Assets() {
   });
   const providerId = providerCtx?.id ?? "replicate";
   const providerLabel = providerCtx?.label ?? "AI";
-  const apiKey = localStorage.getItem(apiKeyStorageKey(providerId));
+
+  // Whether the active provider has a key saved in the backend. Drives the
+  // "set your key" banner and gates generation.
+  const { data: apiKey } = useQuery({
+    queryKey: ["hasApiKey", providerId],
+    queryFn: () => hasApiKey(providerId),
+    staleTime: 30_000,
+  });
 
   const selectAsset = useCallback((path: string) => {
     setSelectedPath(path);
@@ -273,8 +280,7 @@ export default function Assets() {
 
   async function generate() {
     if (generating) return;
-    const key = localStorage.getItem(apiKeyStorageKey(providerId));
-    if (!key) {
+    if (!apiKey) {
       setError(`Kunci API ${providerLabel} belum diatur.`);
       return;
     }
@@ -287,7 +293,8 @@ export default function Assets() {
       const src = await assetToDataUri(selectedPath!);
       // Fire the prediction in async mode and return immediately. The backend
       // records it as `pending`; the frontend does not block until it's done.
-      await createPrediction(src, variantPrompt.trim(), providerId, key);
+      // The API key is read from the backend settings, not passed from here.
+      await createPrediction(src, variantPrompt.trim(), providerId);
       await refresh();
       setVariantOpen(false);
       setVariantPrompt("");

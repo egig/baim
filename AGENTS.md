@@ -44,22 +44,27 @@ Tauri v2 app, two halves over `invoke()`.
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | `ImageProvider` trait, `GenerateRequest`/`CreateOutcome`/`PollOutcome`/`ProviderInfo`, and the provider registry (`all_providers`/`get_provider`) |
 | `providers/replicate.rs` | Concrete Replicate impl (`google/nano-banana-2`, async poll) |
+| `providers/google.rs` | Concrete Google/Gemini impl (Interactions API, `gemini-3.1-flash-image`, synchronous, retries transient 5xx) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
 Commands: `create_prediction`, `refresh_generation`, `list_providers`,
-`get_active_provider`, `set_active_provider`, `get_images`, `get_generations`,
-`delete_image`, `save_uploaded_image`, `get_storage_dir`, `set_storage_dir`.
+`get_active_provider`, `set_active_provider`, `has_api_key`, `set_api_key`,
+`get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
+`get_storage_dir`, `set_storage_dir`.
 
 ### Provider abstraction
 
 Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
 `all_providers()`; the settings dropdown, per-provider API-key inputs, and
-per-generation dispatch are all driven off that registry. Replicate is currently
-the only registered provider. The trait supports both async-poll providers
-(`CreateOutcome::Pending { poll_url }`, advanced by `poll`) and synchronous ones
-(`CreateOutcome::Done { image_bytes }`, saved immediately). The active provider
+per-generation dispatch are all driven off that registry. Registered providers:
+**Replicate** (async, `google/nano-banana-2`) and **Google/Gemini** (synchronous,
+`gemini-3.1-flash-image` via the Interactions API — `POST /v1/interactions`,
+model in the body, image in `steps[].content[]`). The trait supports both
+async-poll providers (`CreateOutcome::Pending { poll_url }`, advanced by `poll`)
+and synchronous ones (`CreateOutcome::Done { image_bytes }`, saved immediately —
+Google returns the edited image inline in the same interaction). The active provider
 is a **global choice** stored in the DB `settings` table (`active_provider` key)
 and each `generations` row records the `provider` that produced it.
 
@@ -71,11 +76,13 @@ and each `generations` row records the `provider` that produced it.
   `get_generations` query the DB, not the filesystem. On startup,
   `seed_from_disk()` idempotently populates the DB from existing files in the
   configured storage dir.
-- **API key** — stored in `localStorage` per provider under key
-  `<provider_id>_api_key` (Replicate keeps the historical `replicate_api_key`),
-  passed as a param on `create_prediction`/`refresh_generation`. No server-side
-  secret storage. The `provider` id is passed alongside on `create_prediction`;
-  `refresh_generation` reads it from the stored generation row.
+- **API key** — stored server-side in the DB `settings` table per provider
+  under key `<provider_id>_api_key` (e.g. `replicate_api_key`). Written via
+  `set_api_key` (empty string clears it); the value never leaves the backend —
+  the frontend only queries presence via `has_api_key`. Generation reads the key
+  from the DB itself: `create_prediction` looks it up by the passed `provider`
+  id, `refresh_generation` by the stored generation row's `provider`. Neither
+  command takes the key as a param.
 - **Storage directory** — user-configurable. Persisted in the DB `settings`
   table (`storage_dir` key), cached on the `Db` struct (`db.storage_dir()`),
   defaults to `~/Pictures/catalog-gen` (`generation::default_storage_dir`).

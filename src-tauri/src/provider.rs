@@ -12,10 +12,9 @@ pub struct GenerateRequest {
 /// a poll URL and finish later; synchronous providers hand back image bytes
 /// directly, so the orchestrator can save them immediately.
 pub enum CreateOutcome {
+    // Async providers (Replicate) return a poll URL, advanced later by `poll`.
     Pending { poll_url: String },
-    // Constructed only by synchronous providers; the sole registered provider
-    // (Replicate) is async, so this is scaffolding for future ones.
-    #[allow(dead_code)]
+    // Synchronous providers (Google/Gemini) return the image bytes directly.
     Done { image_bytes: Vec<u8>, ext: String },
 }
 
@@ -55,7 +54,10 @@ pub const DEFAULT_PROVIDER: &str = "replicate";
 /// `ImageProvider` and add it here — the settings dropdown, per-provider keys,
 /// and per-generation dispatch are all driven off this list.
 pub fn all_providers() -> Vec<Box<dyn ImageProvider>> {
-    vec![Box::new(crate::providers::replicate::ReplicateProvider)]
+    vec![
+        Box::new(crate::providers::replicate::ReplicateProvider),
+        Box::new(crate::providers::google::GoogleProvider),
+    ]
 }
 
 /// Look up a provider by its id, if registered.
