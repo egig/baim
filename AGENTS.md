@@ -48,7 +48,8 @@ Tauri v2 app, two halves over `invoke()`.
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
-Commands: `create_prediction`, `refresh_generation`, `list_providers`,
+Commands: `create_prediction`, `create_predictions` (batch: one prediction per
+prompt), `refresh_generation`, `list_providers`,
 `get_active_provider`, `set_active_provider`, `has_api_key`, `set_api_key`,
 `get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
 `get_storage_dir`, `set_storage_dir`.

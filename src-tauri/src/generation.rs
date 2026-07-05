@@ -16,20 +16,46 @@ pub async fn create_prediction(
     prompt: &str,
     provider_id: &str,
 ) -> Result<Generation, String> {
+    let gen = create_one(db, data_uri, prompt, provider_id).await;
+    match &gen.error {
+        Some(err) if gen.status == "failed" => Err(err.clone()),
+        _ => Ok(gen),
+    }
+}
+
+/// Create one generation per prompt against the same source image and provider,
+/// server-side. Each becomes its own `pending` row advanced later by
+/// `refresh_generation`. A single failing prompt is recorded as a `failed` row
+/// and does not abort the rest. Returns every record (pending or failed) in
+/// prompt order.
+pub async fn create_predictions(
+    db: &Db,
+    data_uri: &str,
+    prompts: &[String],
+    provider_id: &str,
+) -> Result<Vec<Generation>, String> {
+    if prompts.is_empty() {
+        return Err("No prompts provided".to_string());
+    }
+    let mut out = Vec::with_capacity(prompts.len());
+    for prompt in prompts {
+        // Sequential: avoids bursting the provider's rate limits.
+        out.push(create_one(db, data_uri, prompt, provider_id).await);
+    }
+    Ok(out)
+}
+
+/// Kick off a single generation, always returning a persisted record. On failure
+/// the record is stored as `failed` with the error set, rather than an `Err`, so
+/// one bad prompt can't abort a batch. Shared by the singular and batch paths.
+async fn create_one(db: &Db, data_uri: &str, prompt: &str, provider_id: &str) -> Generation {
     match do_create(db, data_uri, prompt, provider_id).await {
-        Ok(gen) => Ok(gen),
+        Ok(gen) => gen,
         Err(err) => {
-            let record = new_generation(
-                prompt,
-                data_uri,
-                provider_id,
-                "failed",
-                None,
-                None,
-                Some(err.clone()),
-            );
+            let record =
+                new_generation(prompt, data_uri, provider_id, "failed", None, None, Some(err));
             let _ = db.upsert_generation(&record);
-            Err(err)
+            record
         }
     }
 }

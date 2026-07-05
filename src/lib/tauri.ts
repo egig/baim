@@ -19,6 +19,20 @@ export async function createPrediction(
   });
 }
 
+/** Create one generation per prompt in a single backend call, sharing one
+ *  source image and provider. Powers batch generation from selected templates. */
+export async function createPredictions(
+  dataUri: string,
+  prompts: string[],
+  provider: string
+): Promise<Generation[]> {
+  return invoke<Generation[]>("create_predictions", {
+    dataUri,
+    prompts,
+    provider,
+  });
+}
+
 export async function refreshGeneration(id: string): Promise<Generation> {
   return invoke<Generation>("refresh_generation", { id });
 }

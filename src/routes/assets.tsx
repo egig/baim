@@ -8,6 +8,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   createPrediction,
+  createPredictions,
   deleteImage,
   saveImage,
   getActiveProvider,
@@ -17,6 +18,7 @@ import {
   type Generation,
 } from "../lib/tauri";
 import { assetsQuery } from "../lib/queries";
+import { GENERATION_TEMPLATES } from "../lib/templates";
 import { Button } from "../root";
 
 // ---------- helpers ----------
@@ -280,6 +282,9 @@ export default function Assets() {
 
   const [variantOpen, setVariantOpen] = useState(false);
   const [variantPrompt, setVariantPrompt] = useState("");
+  const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(
+    new Set()
+  );
   const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +317,7 @@ export default function Assets() {
     setSelectedPath(path);
     setVariantOpen(false);
     setVariantPrompt("");
+    setSelectedTemplates(new Set());
     setError(null);
   }, []);
 
@@ -325,11 +331,21 @@ export default function Assets() {
     setSelectedPath(null);
     setVariantOpen(false);
     setVariantPrompt("");
+    setSelectedTemplates(new Set());
   }
 
   function toggleVariant() {
     setVariantOpen((v) => !v);
     setVariantPrompt("");
+  }
+
+  function toggleTemplate(id: string) {
+    setSelectedTemplates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function onUploadClick() {
@@ -371,6 +387,34 @@ export default function Assets() {
       // The API key is read from the backend settings, not passed from here.
       await createPrediction(src, variantPrompt.trim(), providerId);
       await refresh();
+      setVariantOpen(false);
+      setVariantPrompt("");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function generateFromTemplates() {
+    if (generating || selectedTemplates.size === 0) return;
+    if (!apiKey) {
+      setError(`Kunci API ${providerLabel} belum diatur.`);
+      return;
+    }
+    if (!selectedPath) return;
+
+    setGenerating(true);
+    setError(null);
+    try {
+      const src = await assetToDataUri(selectedPath!);
+      const prompts = GENERATION_TEMPLATES.filter((t) =>
+        selectedTemplates.has(t.id)
+      ).map((t) => t.prompt);
+      // One backend call fans out into one pending generation per template.
+      await createPredictions(src, prompts, providerId);
+      await refresh();
+      setSelectedTemplates(new Set());
       setVariantOpen(false);
       setVariantPrompt("");
     } catch (err) {
@@ -710,6 +754,146 @@ export default function Assets() {
                   }}
                 >
                   Buat varian
+                </div>
+
+                {/* Template picker — pick one or more, generate as a batch */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))",
+                    gap: 10,
+                    marginBottom: 12,
+                  }}
+                >
+                  {GENERATION_TEMPLATES.map((t) => {
+                    const isSelected = selectedTemplates.has(t.id);
+                    return (
+                      <div
+                        key={t.id}
+                        onClick={() => toggleTemplate(t.id)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <div
+                          style={{
+                            position: "relative",
+                            aspectRatio: "1",
+                            borderRadius: "var(--r-card)",
+                            overflow: "hidden",
+                            border: "1px solid var(--line-3)",
+                            background: "var(--fill-1)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {t.imagePreview ? (
+                            <img
+                              src={t.imagePreview}
+                              alt={t.name}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                              }}
+                            />
+                          ) : (
+                            <svg
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              style={{ color: "var(--ink-350)" }}
+                            >
+                              <rect
+                                x="3"
+                                y="4"
+                                width="18"
+                                height="16"
+                                rx="2"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              />
+                              <circle
+                                cx="8.5"
+                                cy="9.5"
+                                r="1.5"
+                                fill="currentColor"
+                              />
+                              <path
+                                d="M4 17l5-5 4 4 3-3 4 4"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
+                          {isSelected && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                border: "1.5px solid var(--indigo-500)",
+                                borderRadius: "var(--r-card)",
+                                boxShadow: "0 0 0 1.5px var(--indigo-100)",
+                              }}
+                            />
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: isSelected
+                              ? "var(--indigo-600)"
+                              : "var(--ink-700)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {t.name}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  variant="primary"
+                  disabled={generating || selectedTemplates.size === 0}
+                  onClick={generateFromTemplates}
+                >
+                  <svg width="14" height="14" viewBox="0 0 15 15">
+                    <path
+                      d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
+                      fill="#fff"
+                    />
+                  </svg>
+                  {generating
+                    ? "Menghasilkan…"
+                    : `Hasilkan ${selectedTemplates.size} varian`}
+                </Button>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    margin: "16px 0 12px",
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: ".04em",
+                    color: "var(--ink-350)",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  <div style={{ flex: 1, height: 1, background: "var(--line-1)" }} />
+                  atau prompt manual
+                  <div style={{ flex: 1, height: 1, background: "var(--line-1)" }} />
                 </div>
 
                 {variantOpen ? (

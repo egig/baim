@@ -15,6 +15,18 @@ pub async fn create_prediction(
     generation::create_prediction(&*state, &data_uri, &prompt, &provider).await
 }
 
+/// Create one generation per prompt in a single call, sharing one source image
+/// and provider. Powers batch generation from selected templates.
+#[tauri::command]
+pub async fn create_predictions(
+    state: tauri::State<'_, Db>,
+    data_uri: String,
+    prompts: Vec<String>,
+    provider: String,
+) -> Result<Vec<Generation>, String> {
+    generation::create_predictions(&*state, &data_uri, &prompts, &provider).await
+}
+
 #[tauri::command]
 pub async fn refresh_generation(
     state: tauri::State<'_, Db>,
