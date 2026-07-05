@@ -274,9 +274,16 @@ impl Db {
 
     pub fn list_generations(&self) -> Result<Vec<Generation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        // `input_data_uri` is the full base64 source image. The list feed is
+        // fetched on every poll/refresh, and the frontend only needs the inline
+        // image for *pending* rows (the in-progress placeholder tile). Emptying
+        // it for settled rows keeps this from shipping many MB of base64 across
+        // the IPC bridge (and being JSON-parsed on the UI thread) each refetch.
         let mut stmt = conn
             .prepare(
-                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at
+                "SELECT id, prompt,
+                        CASE WHEN status = 'pending' THEN input_data_uri ELSE '' END AS input_data_uri,
+                        provider, status, poll_url, output_path, error, created_at
                  FROM generations ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;

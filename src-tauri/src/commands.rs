@@ -81,13 +81,17 @@ pub fn get_generations(state: tauri::State<'_, Db>) -> Result<Vec<Generation>, S
     generation::list_generations(&*state)
 }
 
+// `async` so the file + SQLite work runs on Tauri's async runtime rather than
+// the main thread, where it would block the webview UI until it completes.
 #[tauri::command]
-pub fn delete_image(state: tauri::State<'_, Db>, path: String) -> Result<(), String> {
+pub async fn delete_image(state: tauri::State<'_, Db>, path: String) -> Result<(), String> {
     generation::delete_image(&*state, &path)
 }
 
+// `async` for the same reason: base64-decoding and writing the upload to disk
+// must not block the main (UI) thread.
 #[tauri::command]
-pub fn save_uploaded_image(
+pub async fn save_uploaded_image(
     state: tauri::State<'_, Db>,
     data_uri: String,
 ) -> Result<ImageEntry, String> {

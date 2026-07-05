@@ -25,6 +25,11 @@ import { Button } from "../root";
 
 type Dims = { w: number; h: number };
 
+/** Origin filter for the asset grid: everything, uploaded sources, or AI output. */
+type AssetFilter = "all" | "source" | "ai";
+/** Layout for the asset library: tile grid or detailed row list. */
+type AssetView = "grid" | "list";
+
 function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
     return (bytes / (1024 * 1024)).toFixed(1).replace(".", ",") + " MB";
@@ -59,25 +64,43 @@ async function assetToDataUri(path: string): Promise<string> {
   });
 }
 
-/** Normalize a picked file to a PNG data URI. */
+/** Largest edge (px) we keep for an uploaded source image. Anything bigger is
+ *  downscaled — a full-res photo re-encoded to PNG produces a huge payload that
+ *  is slow to encode and to ship across the `invoke()` bridge, without helping
+ *  generation quality. Bump this if you need more source detail. */
+const MAX_UPLOAD_DIMENSION = 2048;
+
+/** Normalize a picked file to a PNG data URI without freezing the UI: decode
+ *  off the main thread (`createImageBitmap`), downscale oversized images, and
+ *  encode asynchronously (`toBlob`) instead of the synchronous `toDataURL`. */
 function fileToDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext("2d")!.drawImage(img, 0, 0);
-      const dataUri = canvas.toDataURL("image/png");
-      URL.revokeObjectURL(url);
-      resolve(dataUri);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Gagal membaca gambar."));
-    };
-    img.src = url;
+    const fail = () => reject(new Error("Gagal membaca gambar."));
+    createImageBitmap(file)
+      .then((bitmap) => {
+        const scale = Math.min(
+          1,
+          MAX_UPLOAD_DIMENSION / Math.max(bitmap.width, bitmap.height)
+        );
+        const w = Math.max(1, Math.round(bitmap.width * scale));
+        const h = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
+        bitmap.close();
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            fail();
+            return;
+          }
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result as string);
+          fr.onerror = fail;
+          fr.readAsDataURL(blob);
+        }, "image/png");
+      })
+      .catch(fail);
   });
 }
 
@@ -250,6 +273,200 @@ const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
   );
 });
 
+/** A single image rendered as a detailed row for the list view: thumbnail,
+ *  filename with a Sumber/AI origin badge, and a metadata line. */
+const ImageRow = memo(function ImageRow({
+  img,
+  isAi,
+  selected,
+  dim,
+  onSelect,
+  onLoad,
+}: {
+  img: ImageEntry;
+  isAi: boolean;
+  selected: boolean;
+  dim: Dims | undefined;
+  onSelect: (path: string) => void;
+  onLoad: (path: string, w: number, h: number) => void;
+}) {
+  return (
+    <div
+      onClick={() => onSelect(img.path)}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "8px 10px",
+        borderRadius: "var(--r-card)",
+        border: selected
+          ? "1.5px solid var(--indigo-500)"
+          : "1px solid var(--line-3)",
+        boxShadow: selected ? "0 0 0 1.5px var(--indigo-100)" : "none",
+        background: "var(--surface-0)",
+        cursor: "pointer",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: 48,
+          height: 48,
+          flexShrink: 0,
+          borderRadius: "var(--r-badge-sm)",
+          overflow: "hidden",
+          border: "1px solid var(--line-3)",
+          background: "var(--fill-1)",
+        }}
+      >
+        <img
+          src={convertFileSrc(img.path)}
+          alt={img.filename}
+          loading="lazy"
+          onLoad={(e) => {
+            const el = e.currentTarget;
+            onLoad(img.path, el.naturalWidth, el.naturalHeight);
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--ink-900)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {img.filename}
+          </span>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: ".02em",
+              padding: "2px 5px",
+              borderRadius: "var(--r-badge-sm)",
+              color: isAi ? "var(--indigo-600)" : "var(--ink-500)",
+              background: isAi ? "var(--indigo-100)" : "var(--fill-1)",
+            }}
+          >
+            {isAi ? "AI" : "Sumber"}
+          </span>
+        </div>
+        <div
+          style={{
+            marginTop: 3,
+            fontSize: 11,
+            color: "var(--ink-400)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {`${dim ? `${dim.w}×${dim.h}` : "…"} · ${fmtSize(
+            img.size_bytes
+          )} · ${fmtDate(img.created_at)}`}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/** In-progress generation rendered as a list row, mirroring `PendingCard`. */
+const PendingRow = memo(function PendingRow({ gen }: { gen: Generation }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "8px 10px",
+        borderRadius: "var(--r-card)",
+        border: "1px solid var(--line-3)",
+        background: "var(--surface-0)",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          width: 48,
+          height: 48,
+          flexShrink: 0,
+          borderRadius: "var(--r-badge-sm)",
+          overflow: "hidden",
+          border: "1px solid var(--line-3)",
+          background: "var(--fill-1)",
+        }}
+      >
+        <img
+          src={gen.input_data_uri}
+          alt=""
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: 0.35,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <svg
+            className="assets-spin"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            style={{ color: "var(--indigo-500)" }}
+          >
+            <path
+              d="M21 12a9 9 0 1 1-6.219-8.56"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          color: "var(--ink-400)",
+        }}
+      >
+        Menghasilkan…
+      </div>
+    </div>
+  );
+});
+
 // ---------- route ----------
 
 /** Prefetch the asset library into the query cache so navigation to "/" is
@@ -269,6 +486,21 @@ export default function Assets() {
     gens: {},
     pending: [],
   };
+
+  // View controls: filter by origin (source vs AI) and toggle grid/list layout.
+  // Both are ephemeral view preferences — they reset to their defaults on remount.
+  const [filter, setFilter] = useState<AssetFilter>("all");
+  const [view, setView] = useState<AssetView>("grid");
+
+  // An image is AI-generated iff it's the output of a generation (`gens` is keyed
+  // by output path). Everything else is an uploaded source.
+  const visibleImages = images.filter((img) => {
+    if (filter === "all") return true;
+    const isAi = !!gens[img.path];
+    return filter === "ai" ? isAi : !isAi;
+  });
+  // Pending tiles are always in-flight AI generations — hide them under "source".
+  const visiblePending = filter === "source" ? [] : pending;
 
   /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
    *  settles, so callers can safely select the newly-created asset afterward. */
@@ -498,9 +730,30 @@ export default function Assets() {
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {images.length}
+            {visibleImages.length}
           </span>
+
+          <Segmented
+            options={[
+              { value: "all", label: "Semua" },
+              { value: "source", label: "Sumber" },
+              { value: "ai", label: "AI" },
+            ]}
+            value={filter}
+            onChange={setFilter}
+          />
+
           <div style={{ flex: 1 }} />
+
+          <Segmented
+            options={[
+              { value: "grid", label: <GridIcon />, title: "Tampilan petak" },
+              { value: "list", label: <ListIcon />, title: "Tampilan daftar" },
+            ]}
+            value={view}
+            onChange={setView}
+          />
+
           <Button variant="outline" onClick={onUploadClick}>
             <svg width="14" height="14" viewBox="0 0 15 15">
               <path
@@ -571,7 +824,24 @@ export default function Assets() {
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : visibleImages.length === 0 && visiblePending.length === 0 ? (
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--ink-400)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 13, color: "var(--ink-500)" }}>
+                  {filter === "source"
+                    ? "Tidak ada gambar sumber."
+                    : "Belum ada gambar AI."}
+                </div>
+              </div>
+            ) : view === "grid" ? (
               <div
                 style={{
                   display: "grid",
@@ -580,13 +850,36 @@ export default function Assets() {
                   alignContent: "start",
                 }}
               >
-                {pending.map((gen) => (
+                {visiblePending.map((gen) => (
                   <PendingCard key={gen.id} gen={gen} />
                 ))}
-                {images.map((img) => (
+                {visibleImages.map((img) => (
                   <ImageCard
                     key={img.path}
                     img={img}
+                    selected={img.path === selectedPath}
+                    dim={dims[img.path]}
+                    onSelect={selectAsset}
+                    onLoad={handleImageLoad}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                {visiblePending.map((gen) => (
+                  <PendingRow key={gen.id} gen={gen} />
+                ))}
+                {visibleImages.map((img) => (
+                  <ImageRow
+                    key={img.path}
+                    img={img}
+                    isAi={!!gens[img.path]}
                     selected={img.path === selectedPath}
                     dim={dims[img.path]}
                     onSelect={selectAsset}
@@ -1008,6 +1301,88 @@ export default function Assets() {
           )}
         </div>
     </>
+  );
+}
+
+/** Inline segmented control: a pill group where one option is active. Generic
+ *  over the option value so it drives both the origin filter and the view toggle. */
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: ReactNode; title?: string }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        padding: 2,
+        gap: 2,
+        borderRadius: "var(--r-control)",
+        background: "var(--fill-1)",
+        border: "1px solid var(--line-3)",
+      }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            title={opt.title}
+            onClick={() => onChange(opt.value)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              minHeight: 22,
+              padding: "0 9px",
+              border: "none",
+              borderRadius: "var(--r-badge-sm)",
+              cursor: "pointer",
+              fontSize: 11.5,
+              fontWeight: 600,
+              lineHeight: 1,
+              color: active ? "var(--indigo-600)" : "var(--ink-500)",
+              background: active ? "var(--surface-0)" : "transparent",
+              boxShadow: active ? "0 1px 2px rgba(0,0,0,.06)" : "none",
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function GridIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
+      <rect x="2" y="2" width="4.5" height="4.5" rx="1" fill="currentColor" />
+      <rect x="8.5" y="2" width="4.5" height="4.5" rx="1" fill="currentColor" />
+      <rect x="2" y="8.5" width="4.5" height="4.5" rx="1" fill="currentColor" />
+      <rect x="8.5" y="8.5" width="4.5" height="4.5" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
+      <rect x="2" y="2.5" width="3" height="3" rx="0.7" fill="currentColor" />
+      <rect x="2" y="9.5" width="3" height="3" rx="0.7" fill="currentColor" />
+      <path
+        d="M6.5 4h6.5M6.5 11h6.5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
