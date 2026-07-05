@@ -1,6 +1,6 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-05
+**Last updated**: 2026-07-05 (configurable storage dir + settings page)
 
 ## Commands
 
@@ -29,7 +29,8 @@ Tauri v2 app, two halves over `invoke()`.
   (no enums, no namespaces).
 - **Routes** (`src/main.tsx`):
   - `/` → `routes/assets.tsx` — asset library (main page)
-  - `/settings` → `routes/setup.tsx` — API key config
+  - `/settings` → `routes/settings.tsx` — settings page (API key + storage
+    location sections; folder picker via `@tauri-apps/plugin-dialog`)
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
 - `src/root.tsx` — layout shell with sidebar, exports `Button` component.
@@ -44,20 +45,30 @@ Tauri v2 app, two halves over `invoke()`.
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
 Commands: `create_prediction`, `refresh_generation`, `get_images`,
-`get_generations`, `delete_image`, `save_uploaded_image`.
+`get_generations`, `delete_image`, `save_uploaded_image`, `get_storage_dir`,
+`set_storage_dir`.
 
 ### Key constraints
 
-- **Database-driven** — SQLite at `~/Pictures/catalog-gen/catalog.db`.
-  `get_images` / `get_generations` query the DB, not the filesystem.
-  On startup, `seed_from_disk()` idempotently populates the DB from existing
-  files on disk (migration path from the old sidecar approach).
+- **Database-driven** — SQLite at `<app-data>/com.catalog-image-generator.app/catalog.db`
+  (`dirs::data_dir()`, **not** inside the image storage folder — so the app
+  always boots and the folder can be relocated). `get_images` /
+  `get_generations` query the DB, not the filesystem. On startup,
+  `seed_from_disk()` idempotently populates the DB from existing files in the
+  configured storage dir.
 - **API key** — stored in `localStorage` under key `replicate_api_key`, passed
   as a param on every invoke. No server-side secret storage.
-- **Image files** — saved in `~/Pictures/catalog-gen/` named `<prediction_id>.jpg`.
-  Served to the frontend via `convertFileSrc(path)` (Tauri asset protocol).
-  Config: `"enable": true`, scope `"$HOME/Pictures/catalog-gen/**/*"` in
-  `tauri.conf.json`. Requires `protocol-asset` Cargo feature on the `tauri` crate.
+- **Storage directory** — user-configurable. Persisted in the DB `settings`
+  table (`storage_dir` key), cached on the `Db` struct (`db.storage_dir()`),
+  defaults to `~/Pictures/catalog-gen` (`replicate::default_storage_dir`).
+  Changed via `set_storage_dir` (Settings page → native folder picker).
+- **Image files** — saved in the configured storage dir; generated images named
+  `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
+  `convertFileSrc(path)` (Tauri asset protocol). The static
+  `"$HOME/Pictures/catalog-gen/**/*"` scope in `tauri.conf.json` is only the
+  default; the configured dir is registered at runtime via
+  `app.asset_protocol_scope().allow_directory(dir, true)` (in `lib.rs` setup and
+  on every `set_storage_dir`). Requires `protocol-asset` Cargo feature.
   CSP must allow `asset:` and `http://asset.localhost` for `img-src`.
 - **Polling** — `create_prediction` returns immediately (async mode). Frontend
   drives `refresh_generation` via `pollUntilDone()` (45 attempts, 2s interval)
@@ -69,4 +80,4 @@ Commands: `create_prediction`, `refresh_generation`, `get_images`,
 - **Path safety** — `delete_image` canonicalizes paths and rejects anything
   outside the images directory.
 - **Rust deps**: `reqwest` (HTTP), `rusqlite` (SQLite), `serde`/`serde_json`,
-  `uuid`, `dirs`, `tokio`, `base64`.
+  `uuid`, `dirs`, `tokio`, `base64`, `tauri-plugin-dialog` (folder picker).

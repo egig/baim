@@ -1,12 +1,19 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::replicate::{Generation, ImageEntry};
+use crate::replicate::{default_storage_dir, Generation, ImageEntry};
+
+/// `settings` key under which the user-chosen storage directory is stored.
+const STORAGE_DIR_KEY: &str = "storage_dir";
 
 pub struct Db {
     conn: Mutex<Connection>,
+    /// The directory image files live in. Loaded from the `settings` table on
+    /// open (falling back to `default_storage_dir`) and cached here so image
+    /// operations don't hit the DB for it on every call.
+    storage_dir: Mutex<PathBuf>,
 }
 
 impl Db {
@@ -14,8 +21,10 @@ impl Db {
         let conn = Connection::open(db_path)
             .map_err(|e| format!("Failed to open DB: {}", e))?;
         Self::init_tables(&conn)?;
+        let storage_dir = Self::read_storage_dir(&conn)?;
         Ok(Db {
             conn: Mutex::new(conn),
+            storage_dir: Mutex::new(storage_dir),
         })
     }
 
@@ -38,9 +47,52 @@ impl Db {
                 error TEXT,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             ",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))
+    }
+
+    fn read_storage_dir(conn: &Connection) -> Result<PathBuf, String> {
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![STORAGE_DIR_KEY],
+                |row| row.get(0),
+            )
+            .ok();
+        match stored {
+            Some(s) if !s.is_empty() => Ok(PathBuf::from(s)),
+            _ => default_storage_dir(),
+        }
+    }
+
+    /// The currently configured storage directory.
+    pub fn storage_dir(&self) -> PathBuf {
+        self.storage_dir
+            .lock()
+            .expect("storage_dir mutex poisoned")
+            .clone()
+    }
+
+    /// Persist and cache a new storage directory. The path is expected to be
+    /// already created and canonicalized by the caller.
+    pub fn set_storage_dir(&self, dir: &Path) -> Result<(), String> {
+        {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![STORAGE_DIR_KEY, dir.to_string_lossy().to_string()],
+            )
+            .map_err(|e| format!("Failed to save storage directory: {}", e))?;
+        }
+        let mut guard = self.storage_dir.lock().map_err(|e| e.to_string())?;
+        *guard = dir.to_path_buf();
+        Ok(())
     }
 
     pub fn insert_image(&self, entry: &ImageEntry) -> Result<(), String> {
@@ -180,7 +232,7 @@ impl Db {
     /// One-time seed from existing files on disk. Uses INSERT OR IGNORE so it's
     /// idempotent — safe to run on every startup.
     pub fn seed_from_disk(&self) -> Result<(), String> {
-        let images_dir = crate::replicate::get_images_dir()?;
+        let images_dir = self.storage_dir();
 
         // Seed generations from existing JSON sidecars
         let generations_dir = images_dir.join("generations");

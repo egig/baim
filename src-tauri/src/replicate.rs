@@ -157,7 +157,7 @@ pub async fn refresh_generation(
             .ok_or("Unexpected output format")?
             .to_string();
 
-        let images_dir = get_images_dir()?;
+        let images_dir = db.storage_dir();
         let filename = format!("{}.{}", record.id, OUTPUT_FORMAT);
         let filepath = images_dir.join(&filename);
 
@@ -214,9 +214,32 @@ fn apply_prediction_status(record: &mut Generation, status: &str, error: Option<
     }
 }
 
-pub fn get_images_dir() -> Result<std::path::PathBuf, String> {
+/// The storage directory used the first time the app runs, before the user has
+/// chosen one. Kept as the fallback so existing installs (and their seeded
+/// files) keep working without any migration.
+pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     Ok(home.join("Pictures").join("catalog-gen"))
+}
+
+/// Return the currently configured storage directory as a string.
+pub fn get_storage_dir(db: &Db) -> String {
+    db.storage_dir().to_string_lossy().to_string()
+}
+
+/// Persist a new storage directory. Creates it if missing and canonicalizes so
+/// later path-safety checks in `delete_image` line up. Returns the resolved
+/// absolute path. Registering it with the asset protocol scope is the caller's
+/// job (see `commands::set_storage_dir`), since that needs the `AppHandle`.
+pub fn set_storage_dir(db: &Db, dir: &str) -> Result<String, String> {
+    let path = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("Failed to create storage directory: {}", e))?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid storage directory: {}", e))?;
+    db.set_storage_dir(&canonical)?;
+    Ok(canonical.to_string_lossy().to_string())
 }
 
 /// Delete a saved image file and its associated generation record.
@@ -224,7 +247,8 @@ pub fn get_images_dir() -> Result<std::path::PathBuf, String> {
 /// directory, so a path coming back from the frontend can't remove sidecar
 /// records or escape the directory via `..`/symlinks.
 pub fn delete_image(db: &Db, path: &str) -> Result<(), String> {
-    let canonical_dir = get_images_dir()?
+    let canonical_dir = db
+        .storage_dir()
         .canonicalize()
         .map_err(|e| format!("Images directory unavailable: {}", e))?;
     let canonical_target = std::path::Path::new(path)
@@ -262,7 +286,7 @@ pub fn list_generations(db: &Db) -> Result<Vec<Generation>, String> {
 pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String> {
     use base64::Engine;
 
-    let images_dir = get_images_dir()?;
+    let images_dir = db.storage_dir();
     std::fs::create_dir_all(&images_dir)
         .map_err(|e| format!("Failed to create images directory: {}", e))?;
 

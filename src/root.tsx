@@ -225,8 +225,8 @@ export default function Root() {
               </svg>
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-800)" }}>API Key</div>
-              <div style={{ fontSize: 11, color: "var(--ink-500)" }}>Pengaturan</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-800)" }}>Pengaturan</div>
+              <div style={{ fontSize: 11, color: "var(--ink-500)" }}>API key &amp; penyimpanan</div>
             </div>
           </Link>
         </div>

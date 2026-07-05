@@ -52,3 +52,11 @@ export async function getGenerations(): Promise<Generation[]> {
 export async function saveImage(dataUri: string): Promise<ImageEntry> {
   return invoke<ImageEntry>("save_uploaded_image", { dataUri });
 }
+
+export async function getStorageDir(): Promise<string> {
+  return invoke<string>("get_storage_dir");
+}
+
+export async function setStorageDir(path: string): Promise<string> {
+  return invoke<string>("set_storage_dir", { path });
+}

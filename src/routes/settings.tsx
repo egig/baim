@@ -1,11 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getStorageDir, setStorageDir } from "../lib/tauri";
 
 const STORAGE_KEY = "replicate_api_key";
 
 const styles = {
-  card: {
+  page: {
     maxWidth: 480,
     margin: "40px auto",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 20,
+  },
+  card: {
     padding: "24px 28px",
     background: "var(--surface-0)",
     border: "1px solid var(--line-3)",
@@ -13,6 +20,12 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: 18,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: "var(--ink-900)",
+    margin: "0 0 2px",
   },
   heading: {
     fontSize: 16,
@@ -44,6 +57,20 @@ const styles = {
     outline: "none",
     boxSizing: "border-box" as const,
   },
+  pathBox: {
+    flex: 1,
+    padding: "9px 11px",
+    border: "1px solid var(--line-4)",
+    borderRadius: "var(--r-control)",
+    fontSize: 12.5,
+    fontFamily: "var(--font-mono)",
+    color: "var(--ink-700)",
+    background: "var(--surface-1)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+    minWidth: 0,
+  },
   row: {
     display: "flex",
     gap: 10,
@@ -58,6 +85,7 @@ const styles = {
     border: "1px solid transparent",
     cursor: "pointer",
     transition: "background .12s",
+    whiteSpace: "nowrap" as const,
   },
   btnPrimary: {
     background: "var(--indigo-500)",
@@ -81,9 +109,14 @@ const styles = {
     fontWeight: 600,
     textDecoration: "none",
   },
+  error: {
+    fontSize: 11.5,
+    color: "var(--red-600)",
+    margin: 0,
+  },
 };
 
-export default function Setup() {
+function ApiKeySection() {
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem(STORAGE_KEY) ?? ""
   );
@@ -156,6 +189,85 @@ export default function Setup() {
           Get one from Replicate
         </a>
       </div>
+    </div>
+  );
+}
+
+function StorageSection() {
+  const [dir, setDir] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getStorageDir()
+      .then(setDir)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  async function handleChoose() {
+    setError(null);
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: dir || undefined,
+    });
+    if (typeof selected !== "string") return;
+
+    setBusy(true);
+    try {
+      const resolved = await setStorageDir(selected);
+      setDir(resolved);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={styles.card}>
+      <div>
+        <div style={styles.heading}>Storage Location</div>
+        <p style={styles.sub}>
+          Where uploaded and generated images are saved on disk. Existing files
+          in the chosen folder are imported automatically.
+        </p>
+      </div>
+
+      <div>
+        <label style={styles.label}>Images folder</label>
+        <div style={styles.row}>
+          <div style={styles.pathBox} title={dir}>
+            {dir || "…"}
+          </div>
+          <button
+            onClick={handleChoose}
+            disabled={busy}
+            style={{
+              ...styles.btn,
+              ...styles.btnOutline,
+              ...(busy ? styles.btnPrimaryDisabled : {}),
+            }}
+          >
+            {busy ? "Saving…" : saved ? "Saved!" : "Change…"}
+          </button>
+        </div>
+      </div>
+
+      {error && <p style={styles.error}>{error}</p>}
+    </div>
+  );
+}
+
+export default function Settings() {
+  return (
+    <div style={styles.page}>
+      <h1 style={styles.title}>Settings</h1>
+      <ApiKeySection />
+      <StorageSection />
     </div>
   );
 }
