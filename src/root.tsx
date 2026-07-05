@@ -178,7 +178,7 @@ export default function Root() {
 
         {/* Nav */}
         <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
-          <NavItem to="/" label="Pustaka aset" icon={iconLibrary} />
+          <NavItem to="/" label="Daftar Gambar" icon={iconLibrary} />
         </div>
 
               

@@ -1,19 +1,22 @@
-import { useEffect, useRef, useState, useCallback, memo, type ReactNode } from "react";
+import { useRef, useState, useCallback, memo, type ReactNode } from "react";
 import { Link } from "react-router";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
-  getImages,
-  getGenerations,
   createPrediction,
-  refreshGeneration,
   deleteImage,
   saveImage,
+  getActiveProvider,
+  listProviders,
+  apiKeyStorageKey,
   type ImageEntry,
-  type Generation,
 } from "../lib/tauri";
+import { assetsQuery } from "../lib/queries";
 import { Button } from "../root";
-
-const STORAGE_KEY = "replicate_api_key";
 
 // ---------- helpers ----------
 
@@ -73,19 +76,6 @@ function fileToDataUri(file: File): Promise<string> {
     };
     img.src = url;
   });
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Drive an async prediction to a terminal state by polling refresh_generation
- *  (there is no background poll loop in this app — see CLAUDE.md). */
-async function pollUntilDone(id: string, key: string): Promise<Generation> {
-  for (let i = 0; i < 45; i++) {
-    const g = await refreshGeneration(id, key);
-    if (g.status !== "pending") return g;
-    await sleep(2000);
-  }
-  throw new Error("Waktu tunggu habis saat membuat varian.");
 }
 
 const ImageCard = memo(function ImageCard({
@@ -189,11 +179,27 @@ const ImageCard = memo(function ImageCard({
 
 // ---------- route ----------
 
+/** Prefetch the asset library into the query cache so navigation to "/" is
+ *  gated on the first load only; repeat visits render instantly from cache. */
+export const loader = (qc: QueryClient) => async () => {
+  await qc.ensureQueryData(assetsQuery);
+  return null;
+};
+
 export default function Assets() {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [images, setImages] = useState<ImageEntry[]>([]);
-  const [gens, setGens] = useState<Record<string, Generation>>({});
+  const qc = useQueryClient();
+  const { data } = useQuery(assetsQuery);
+  const { images, gens } = data ?? { images: [], gens: {} };
+
+  /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
+   *  settles, so callers can safely select the newly-created asset afterward. */
+  const refresh = useCallback(
+    () => qc.invalidateQueries({ queryKey: assetsQuery.queryKey }),
+    [qc]
+  );
+
   const [dims, setDims] = useState<Record<string, Dims>>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
@@ -203,22 +209,22 @@ export default function Assets() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const apiKey = localStorage.getItem(STORAGE_KEY);
-
-  async function load() {
-    const [imgs, generations] = await Promise.all([getImages(), getGenerations()]);
-    setImages(imgs);
-    const map: Record<string, Generation> = {};
-    for (const g of generations) {
-      if (g.output_path) map[g.output_path] = g;
-    }
-    setGens(map);
-    return imgs;
-  }
-
-  useEffect(() => {
-    load().catch((e) => setError(String(e)));
-  }, []);
+  // The globally-selected provider drives which API key we read and send.
+  const { data: providerCtx } = useQuery({
+    queryKey: ["activeProvider"],
+    queryFn: async () => {
+      const [id, providers] = await Promise.all([
+        getActiveProvider(),
+        listProviders(),
+      ]);
+      const info = providers.find((p) => p.id === id) ?? null;
+      return { id, label: info?.label ?? id };
+    },
+    staleTime: 30_000,
+  });
+  const providerId = providerCtx?.id ?? "replicate";
+  const providerLabel = providerCtx?.label ?? "AI";
+  const apiKey = localStorage.getItem(apiKeyStorageKey(providerId));
 
   const selectAsset = useCallback((path: string) => {
     setSelectedPath(path);
@@ -256,7 +262,7 @@ export default function Assets() {
     try {
       const dataUri = await fileToDataUri(file);
       const saved = await saveImage(dataUri);
-      await load();
+      await refresh();
       setSelectedPath(saved.path);
       setVariantOpen(true);
       setVariantPrompt("");
@@ -267,9 +273,9 @@ export default function Assets() {
 
   async function generate() {
     if (generating) return;
-    const key = localStorage.getItem(STORAGE_KEY);
+    const key = localStorage.getItem(apiKeyStorageKey(providerId));
     if (!key) {
-      setError("Kunci API Replicate belum diatur.");
+      setError(`Kunci API ${providerLabel} belum diatur.`);
       return;
     }
     if (!variantPrompt.trim()) return;
@@ -279,16 +285,12 @@ export default function Assets() {
     setError(null);
     try {
       const src = await assetToDataUri(selectedPath!);
-      const created = await createPrediction(src, variantPrompt.trim(), key);
-      const done = await pollUntilDone(created.id, key);
-      if (done.status === "succeeded" && done.output_path) {
-        await load();
-        setSelectedPath(done.output_path);
-        setVariantOpen(false);
-        setVariantPrompt("");
-      } else {
-        setError(done.error || "Gagal membuat varian.");
-      }
+      // Fire the prediction in async mode and return immediately. The backend
+      // records it as `pending`; the frontend does not block until it's done.
+      await createPrediction(src, variantPrompt.trim(), providerId, key);
+      await refresh();
+      setVariantOpen(false);
+      setVariantPrompt("");
     } catch (err) {
       setError(String(err));
     } finally {
@@ -302,7 +304,7 @@ export default function Assets() {
     setError(null);
     try {
       await deleteImage(selectedPath);
-      await load();
+      await refresh();
       setSelectedPath(null);
     } catch (err) {
       setError(String(err));
@@ -353,7 +355,7 @@ export default function Assets() {
             gap: 12,
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>Pustaka aset</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>Daftar Gambar</div>
           <span
             style={{
               minWidth: 18,
@@ -373,9 +375,6 @@ export default function Assets() {
             {images.length}
           </span>
           <div style={{ flex: 1 }} />
-          <Link to="/settings" style={{ textDecoration: "none" }}>
-            <Button variant="ghost">Kunci API</Button>
-          </Link>
           <Button variant="outline" onClick={onUploadClick}>
             <svg width="14" height="14" viewBox="0 0 15 15">
               <path
@@ -408,8 +407,12 @@ export default function Assets() {
               color: "var(--ink-700)",
             }}
           >
-            Kunci API Replicate belum diatur — pembuatan varian butuh kunci.{" "}
-            <Link to="/" style={{ color: "var(--indigo-600)", fontWeight: 600 }}>
+            Kunci API {providerLabel} belum diatur — pembuatan varian butuh
+            kunci.{" "}
+            <Link
+              to="/settings"
+              style={{ color: "var(--indigo-600)", fontWeight: 600 }}
+            >
               Atur sekarang
             </Link>
             .

@@ -1,40 +1,34 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
+use crate::provider::{
+    get_provider, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
+};
 
-/// Model output format. Kept as a constant so the request payload and the saved
-/// file extension can never drift apart.
-const OUTPUT_FORMAT: &str = "jpg";
-
-#[derive(Debug, Deserialize)]
-struct Prediction {
-    id: String,
-    status: String,
-    output: Option<serde_json::Value>,
-    error: Option<String>,
-    urls: Option<PredictionUrls>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PredictionUrls {
-    get: Option<String>,
-}
-
-/// Create a prediction in Replicate's async mode (no `Prefer: wait` header):
-/// the request returns immediately with a prediction id and `status:
-/// "starting"`. We store the generation as `pending` (keyed by the Replicate
-/// prediction id) along with the `urls.get` poll URL, and let the frontend call
-/// `refresh_generation` later to advance it to `succeeded`/`failed`.
+/// Kick off a generation with the chosen provider. Async providers return a
+/// `pending` record with a poll URL (advanced later by `refresh_generation`);
+/// synchronous providers return the image immediately, which we save and record
+/// as `succeeded`. The chosen `provider_id` is persisted on the record so a
+/// later refresh knows which backend to poll.
 pub async fn create_prediction(
     db: &Db,
     data_uri: &str,
     prompt: &str,
+    provider_id: &str,
     api_key: &str,
 ) -> Result<Generation, String> {
-    match do_create(db, data_uri, prompt, api_key).await {
+    match do_create(db, data_uri, prompt, provider_id, api_key).await {
         Ok(gen) => Ok(gen),
         Err(err) => {
-            let record = new_generation(prompt, data_uri, "failed", None, None, Some(err.clone()));
+            let record = new_generation(
+                prompt,
+                data_uri,
+                provider_id,
+                "failed",
+                None,
+                None,
+                Some(err.clone()),
+            );
             let _ = db.upsert_generation(&record);
             Err(err)
         }
@@ -45,173 +39,112 @@ async fn do_create(
     db: &Db,
     data_uri: &str,
     prompt: &str,
+    provider_id: &str,
     api_key: &str,
 ) -> Result<Generation, String> {
-    let client = reqwest::Client::new();
+    let provider =
+        get_provider(provider_id).ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
 
-    let model = "google/nano-banana-2";
-    let payload = serde_json::json!({
-        "input": {
-            "prompt": prompt,
-            "resolution": "1K",
-            "image_input": [data_uri],
-            "aspect_ratio": "1:1",
-            "output_format": OUTPUT_FORMAT,
+    let outcome = provider
+        .create(GenerateRequest {
+            prompt: prompt.to_string(),
+            image_data_uri: data_uri.to_string(),
+            api_key: api_key.to_string(),
+        })
+        .await?;
+
+    match outcome {
+        CreateOutcome::Pending { poll_url } => {
+            let record = new_generation(
+                prompt,
+                data_uri,
+                provider_id,
+                "pending",
+                Some(poll_url),
+                None,
+                None,
+            );
+            let _ = db.upsert_generation(&record);
+            Ok(record)
         }
-    });
-    let url = format!(
-        "https://api.replicate.com/v1/models/{}/predictions",
-        model
-    );
-
-    let create_resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to create prediction: {}", e))?;
-
-    let status = create_resp.status();
-    if !status.is_success() {
-        let body = create_resp
-            .text()
-            .await
-            .unwrap_or_else(|_| "unknown".to_string());
-        return Err(match status.as_u16() {
-            402 => "API quota exceeded or payment required".to_string(),
-            429 => format!(
-                "Rate limited by Replicate (429). Accounts without a payment method are \
-                 capped at ~6 requests/min; add billing at replicate.com/account/billing. \
-                 Response: {}",
-                body
-            ),
-            _ => format!("Replicate API error ({}): {}", status, body),
-        });
+        CreateOutcome::Done { image_bytes, ext } => {
+            let mut record =
+                new_generation(prompt, data_uri, provider_id, "pending", None, None, None);
+            save_generated_image(db, &mut record, &image_bytes, &ext)?;
+            Ok(record)
+        }
     }
-
-    let prediction: Prediction = create_resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let poll_url = prediction.urls.and_then(|u| u.get);
-
-    let mut record = new_generation(prompt, data_uri, "pending", poll_url, None, None);
-    record.id = prediction.id;
-    apply_prediction_status(&mut record, &prediction.status, prediction.error);
-    let _ = db.upsert_generation(&record);
-
-    Ok(record)
 }
 
-/// Poll a stored `pending` generation once and advance it if the prediction has
+/// Poll a stored `pending` generation once and advance it if the provider has
 /// reached a terminal state. Downloads and saves the image on success. Records
 /// that are already terminal are returned unchanged.
-pub async fn refresh_generation(
-    db: &Db,
-    id: &str,
-    api_key: &str,
-) -> Result<Generation, String> {
+pub async fn refresh_generation(db: &Db, id: &str, api_key: &str) -> Result<Generation, String> {
     let mut record = db.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
         return Ok(record);
     }
 
+    let provider = get_provider(&record.provider)
+        .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
+
     let poll_url = record
         .poll_url
         .clone()
         .ok_or("This generation has no poll URL to refresh")?;
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&poll_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch prediction status: {}", e))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_else(|_| "unknown".to_string());
-        return Err(format!(
-            "Failed to fetch prediction status ({}): {}",
-            status, body
-        ));
-    }
-
-    let prediction: Prediction = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse status response: {}", e))?;
-
-    if prediction.status == "succeeded" {
-        let output = prediction.output.ok_or("No output from model")?;
-        let image_url = output
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .or_else(|| output.as_str())
-            .ok_or("Unexpected output format")?
-            .to_string();
-
-        let images_dir = db.storage_dir();
-        let filename = format!("{}.{}", record.id, OUTPUT_FORMAT);
-        let filepath = images_dir.join(&filename);
-
-        let img_bytes = client
-            .get(&image_url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download image: {}", e))?
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read image bytes: {}", e))?;
-
-        std::fs::create_dir_all(&images_dir)
-            .map_err(|e| format!("Failed to create images directory: {}", e))?;
-        std::fs::write(&filepath, &img_bytes)
-            .map_err(|e| format!("Failed to save image: {}", e))?;
-
-        record.status = "succeeded".to_string();
-        record.output_path = Some(filepath.to_string_lossy().to_string());
-        record.error = None;
-
-        let _ = db.upsert_generation(&record);
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-
-        let entry = ImageEntry {
-            path: filepath.to_string_lossy().to_string(),
-            filename,
-            created_at: now,
-            size_bytes: img_bytes.len() as u64,
-        };
-        println!("inserting image {}", entry.path);
-        let _ = db.insert_image(&entry);
-    } else {
-        apply_prediction_status(&mut record, &prediction.status, prediction.error);
-        let _ = db.upsert_generation(&record);
+    match provider.poll(&poll_url, api_key).await? {
+        PollOutcome::Pending => {}
+        PollOutcome::Done { image_bytes, ext } => {
+            save_generated_image(db, &mut record, &image_bytes, &ext)?;
+        }
+        PollOutcome::Failed { error } => {
+            record.status = "failed".to_string();
+            record.error = Some(error);
+            let _ = db.upsert_generation(&record);
+        }
     }
 
     Ok(record)
 }
 
-fn apply_prediction_status(record: &mut Generation, status: &str, error: Option<String>) {
-    match status {
-        "failed" | "canceled" => {
-            record.status = "failed".to_string();
-            record.error = Some(error.unwrap_or_else(|| status.to_string()));
-        }
-        _ => {
-            record.status = "pending".to_string();
-        }
-    }
+/// Write finished image bytes to the storage dir as `{id}.{ext}`, mark the
+/// generation `succeeded`, and insert the matching image row. Shared by the
+/// synchronous create path and the async poll path.
+fn save_generated_image(
+    db: &Db,
+    record: &mut Generation,
+    bytes: &[u8],
+    ext: &str,
+) -> Result<(), String> {
+    let images_dir = db.storage_dir();
+    let filename = format!("{}.{}", record.id, ext);
+    let filepath = images_dir.join(&filename);
+
+    std::fs::create_dir_all(&images_dir)
+        .map_err(|e| format!("Failed to create images directory: {}", e))?;
+    std::fs::write(&filepath, bytes).map_err(|e| format!("Failed to save image: {}", e))?;
+
+    record.status = "succeeded".to_string();
+    record.output_path = Some(filepath.to_string_lossy().to_string());
+    record.error = None;
+    let _ = db.upsert_generation(record);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let entry = ImageEntry {
+        path: filepath.to_string_lossy().to_string(),
+        filename,
+        created_at: now,
+        size_bytes: bytes.len() as u64,
+    };
+    let _ = db.insert_image(&entry);
+
+    Ok(())
 }
 
 /// The storage directory used the first time the app runs, before the user has
@@ -302,8 +235,7 @@ pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String
     let filename = format!("{}.png", uuid::Uuid::new_v4());
     let filepath = images_dir.join(&filename);
 
-    std::fs::write(&filepath, &bytes)
-        .map_err(|e| format!("Failed to save image: {}", e))?;
+    std::fs::write(&filepath, &bytes).map_err(|e| format!("Failed to save image: {}", e))?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -329,14 +261,21 @@ pub struct ImageEntry {
     pub size_bytes: u64,
 }
 
+fn default_provider() -> String {
+    DEFAULT_PROVIDER.to_string()
+}
+
 /// A generation attempt, stored as a JSON sidecar so the user can re-run it or
 /// poll its status. The source image is kept inline as a data URI (the same
 /// value that was sent to the model), so re-generating needs no extra decoding
 /// on either side.
 ///
+/// `provider` records which backend produced it, so a later refresh polls the
+/// right one; it defaults to `replicate` when absent (legacy sidecars/rows).
+///
 /// `status` is one of:
 /// - `"pending"`  — created in async mode, awaiting a `refresh_generation` poll.
-///   `poll_url` holds Replicate's `urls.get`; `output_path`/`error` are `None`.
+///   `poll_url` holds the provider's status URL; `output_path`/`error` are `None`.
 /// - `"succeeded"` — `output_path` points at the saved image.
 /// - `"failed"`   — `error` is set; can be retried from the source.
 #[derive(Debug, Serialize, Deserialize)]
@@ -344,6 +283,8 @@ pub struct Generation {
     pub id: String,
     pub prompt: String,
     pub input_data_uri: String,
+    #[serde(default = "default_provider")]
+    pub provider: String,
     pub status: String,
     #[serde(default)]
     pub poll_url: Option<String>,
@@ -352,9 +293,11 @@ pub struct Generation {
     pub created_at: i64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_generation(
     prompt: &str,
     input_data_uri: &str,
+    provider: &str,
     status: &str,
     poll_url: Option<String>,
     output_path: Option<String>,
@@ -369,6 +312,7 @@ fn new_generation(
         id: uuid::Uuid::new_v4().to_string(),
         prompt: prompt.to_string(),
         input_data_uri: input_data_uri.to_string(),
+        provider: provider.to_string(),
         status: status.to_string(),
         poll_url,
         output_path,

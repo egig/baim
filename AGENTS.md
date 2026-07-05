@@ -1,6 +1,7 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-05 (configurable storage dir + settings page)
+**Last updated**: 2026-07-05 (provider abstraction: `ImageProvider` trait +
+global provider selection)
 
 ## Commands
 
@@ -41,12 +42,26 @@ Tauri v2 app, two halves over `invoke()`.
 |---|---|
 | `lib.rs` | Tauri setup: opens DB, runs `seed_from_disk()`, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
-| `replicate.rs` | Replicate API logic, image save/delete, `ImageEntry`/`Generation` types |
+| `provider.rs` | `ImageProvider` trait, `GenerateRequest`/`CreateOutcome`/`PollOutcome`/`ProviderInfo`, and the provider registry (`all_providers`/`get_provider`) |
+| `providers/replicate.rs` | Concrete Replicate impl (`google/nano-banana-2`, async poll) |
+| `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
-Commands: `create_prediction`, `refresh_generation`, `get_images`,
-`get_generations`, `delete_image`, `save_uploaded_image`, `get_storage_dir`,
-`set_storage_dir`.
+Commands: `create_prediction`, `refresh_generation`, `list_providers`,
+`get_active_provider`, `set_active_provider`, `get_images`, `get_generations`,
+`delete_image`, `save_uploaded_image`, `get_storage_dir`, `set_storage_dir`.
+
+### Provider abstraction
+
+Image generation is abstracted behind the `ImageProvider` trait
+(`provider.rs`). Adding a provider = implement the trait + add it to
+`all_providers()`; the settings dropdown, per-provider API-key inputs, and
+per-generation dispatch are all driven off that registry. Replicate is currently
+the only registered provider. The trait supports both async-poll providers
+(`CreateOutcome::Pending { poll_url }`, advanced by `poll`) and synchronous ones
+(`CreateOutcome::Done { image_bytes }`, saved immediately). The active provider
+is a **global choice** stored in the DB `settings` table (`active_provider` key)
+and each `generations` row records the `provider` that produced it.
 
 ### Key constraints
 
@@ -56,11 +71,14 @@ Commands: `create_prediction`, `refresh_generation`, `get_images`,
   `get_generations` query the DB, not the filesystem. On startup,
   `seed_from_disk()` idempotently populates the DB from existing files in the
   configured storage dir.
-- **API key** — stored in `localStorage` under key `replicate_api_key`, passed
-  as a param on every invoke. No server-side secret storage.
+- **API key** — stored in `localStorage` per provider under key
+  `<provider_id>_api_key` (Replicate keeps the historical `replicate_api_key`),
+  passed as a param on `create_prediction`/`refresh_generation`. No server-side
+  secret storage. The `provider` id is passed alongside on `create_prediction`;
+  `refresh_generation` reads it from the stored generation row.
 - **Storage directory** — user-configurable. Persisted in the DB `settings`
   table (`storage_dir` key), cached on the `Db` struct (`db.storage_dir()`),
-  defaults to `~/Pictures/catalog-gen` (`replicate::default_storage_dir`).
+  defaults to `~/Pictures/catalog-gen` (`generation::default_storage_dir`).
   Changed via `set_storage_dir` (Settings page → native folder picker).
 - **Image files** — saved in the configured storage dir; generated images named
   `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
@@ -80,4 +98,5 @@ Commands: `create_prediction`, `refresh_generation`, `get_images`,
 - **Path safety** — `delete_image` canonicalizes paths and rejects anything
   outside the images directory.
 - **Rust deps**: `reqwest` (HTTP), `rusqlite` (SQLite), `serde`/`serde_json`,
-  `uuid`, `dirs`, `tokio`, `base64`, `tauri-plugin-dialog` (folder picker).
+  `uuid`, `dirs`, `tokio`, `base64`, `async-trait` (provider trait),
+  `tauri-plugin-dialog` (folder picker).

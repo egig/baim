@@ -1,6 +1,8 @@
 mod commands;
 mod db;
-mod replicate;
+mod generation;
+mod provider;
+mod providers;
 
 use std::path::PathBuf;
 
@@ -53,6 +55,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::create_prediction,
             commands::refresh_generation,
+            commands::list_providers,
+            commands::get_active_provider,
+            commands::set_active_provider,
             commands::get_images,
             commands::get_generations,
             commands::delete_image,

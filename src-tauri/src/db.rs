@@ -3,10 +3,13 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::replicate::{default_storage_dir, Generation, ImageEntry};
+use crate::generation::{default_storage_dir, Generation, ImageEntry};
+use crate::provider::DEFAULT_PROVIDER;
 
 /// `settings` key under which the user-chosen storage directory is stored.
 const STORAGE_DIR_KEY: &str = "storage_dir";
+/// `settings` key under which the globally-selected image provider is stored.
+const ACTIVE_PROVIDER_KEY: &str = "active_provider";
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -41,6 +44,7 @@ impl Db {
                 id TEXT PRIMARY KEY,
                 prompt TEXT NOT NULL,
                 input_data_uri TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'replicate',
                 status TEXT NOT NULL DEFAULT 'pending',
                 poll_url TEXT,
                 output_path TEXT,
@@ -53,7 +57,17 @@ impl Db {
             );
             ",
         )
-        .map_err(|e| format!("Failed to create tables: {}", e))
+        .map_err(|e| format!("Failed to create tables: {}", e))?;
+
+        // Migration for pre-provider databases: add the column if it's missing.
+        // `ALTER TABLE ... ADD COLUMN` errors when the column already exists, so
+        // ignore that (idempotent) failure.
+        let _ = conn.execute(
+            "ALTER TABLE generations ADD COLUMN provider TEXT NOT NULL DEFAULT 'replicate'",
+            [],
+        );
+
+        Ok(())
     }
 
     fn read_storage_dir(conn: &Connection) -> Result<PathBuf, String> {
@@ -92,6 +106,38 @@ impl Db {
         }
         let mut guard = self.storage_dir.lock().map_err(|e| e.to_string())?;
         *guard = dir.to_path_buf();
+        Ok(())
+    }
+
+    /// The globally-selected image provider id, falling back to the default when
+    /// unset (fresh installs / pre-provider databases).
+    pub fn read_active_provider(&self) -> String {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return DEFAULT_PROVIDER.to_string(),
+        };
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![ACTIVE_PROVIDER_KEY],
+                |row| row.get(0),
+            )
+            .ok();
+        match stored {
+            Some(s) if !s.is_empty() => s,
+            _ => DEFAULT_PROVIDER.to_string(),
+        }
+    }
+
+    /// Persist the globally-selected image provider id.
+    pub fn set_active_provider(&self, id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_PROVIDER_KEY, id],
+        )
+        .map_err(|e| format!("Failed to save active provider: {}", e))?;
         Ok(())
     }
 
@@ -139,8 +185,8 @@ impl Db {
     pub fn upsert_generation(&self, gen: &Generation) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO generations (id, prompt, input_data_uri, status, poll_url, output_path, error, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 poll_url = excluded.poll_url,
@@ -150,6 +196,7 @@ impl Db {
                 gen.id,
                 gen.prompt,
                 gen.input_data_uri,
+                gen.provider,
                 gen.status,
                 gen.poll_url,
                 gen.output_path,
@@ -164,7 +211,7 @@ impl Db {
     pub fn load_generation(&self, id: &str) -> Option<Generation> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT id, prompt, input_data_uri, status, poll_url, output_path, error, created_at
+            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at
              FROM generations WHERE id = ?1",
             params![id],
             |row| {
@@ -172,11 +219,12 @@ impl Db {
                     id: row.get(0)?,
                     prompt: row.get(1)?,
                     input_data_uri: row.get(2)?,
-                    status: row.get(3)?,
-                    poll_url: row.get(4)?,
-                    output_path: row.get(5)?,
-                    error: row.get(6)?,
-                    created_at: row.get(7)?,
+                    provider: row.get(3)?,
+                    status: row.get(4)?,
+                    poll_url: row.get(5)?,
+                    output_path: row.get(6)?,
+                    error: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             },
         )
@@ -187,7 +235,7 @@ impl Db {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, prompt, input_data_uri, status, poll_url, output_path, error, created_at
+                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, created_at
                  FROM generations ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -198,11 +246,12 @@ impl Db {
                     id: row.get(0)?,
                     prompt: row.get(1)?,
                     input_data_uri: row.get(2)?,
-                    status: row.get(3)?,
-                    poll_url: row.get(4)?,
-                    output_path: row.get(5)?,
-                    error: row.get(6)?,
-                    created_at: row.get(7)?,
+                    provider: row.get(3)?,
+                    status: row.get(4)?,
+                    poll_url: row.get(5)?,
+                    output_path: row.get(6)?,
+                    error: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })
             .map_err(|e| format!("Failed to query generations: {}", e))?

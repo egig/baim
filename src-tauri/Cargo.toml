@@ -26,6 +26,7 @@ tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 tokio = { version = "1", features = ["time"] }

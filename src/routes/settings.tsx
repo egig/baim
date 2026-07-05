@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getStorageDir, setStorageDir } from "../lib/tauri";
-
-const STORAGE_KEY = "replicate_api_key";
+import {
+  getStorageDir,
+  setStorageDir,
+  listProviders,
+  getActiveProvider,
+  setActiveProvider,
+  apiKeyStorageKey,
+  type ProviderInfo,
+} from "../lib/tauri";
 
 const styles = {
   page: {
@@ -56,6 +62,18 @@ const styles = {
     background: "var(--surface-0)",
     outline: "none",
     boxSizing: "border-box" as const,
+  },
+  select: {
+    width: "100%",
+    padding: "9px 11px",
+    border: "1px solid var(--line-4)",
+    borderRadius: "var(--r-control)",
+    fontSize: 13,
+    color: "var(--ink-800)",
+    background: "var(--surface-0)",
+    outline: "none",
+    boxSizing: "border-box" as const,
+    cursor: "pointer",
   },
   pathBox: {
     flex: 1,
@@ -116,31 +134,72 @@ const styles = {
   },
 };
 
-function ApiKeySection() {
+function ProviderSection({
+  providers,
+  active,
+  onChange,
+}: {
+  providers: ProviderInfo[];
+  active: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div style={styles.card}>
+      <div>
+        <div style={styles.heading}>Image Provider</div>
+        <p style={styles.sub}>
+          Which AI backend generates image variants. Each provider uses its own
+          API key below.
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="provider" style={styles.label}>
+          Provider
+        </label>
+        <select
+          id="provider"
+          value={active}
+          onChange={(e) => onChange(e.target.value)}
+          style={styles.select}
+        >
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function ApiKeySection({ provider }: { provider: ProviderInfo }) {
+  const storageKey = apiKeyStorageKey(provider.id);
   const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem(STORAGE_KEY) ?? ""
+    () => localStorage.getItem(storageKey) ?? ""
   );
   const [saved, setSaved] = useState(false);
 
   function handleSave() {
     if (!apiKey.trim()) return;
-    localStorage.setItem(STORAGE_KEY, apiKey.trim());
+    localStorage.setItem(storageKey, apiKey.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
 
   function handleClear() {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey);
     setApiKey("");
   }
 
   return (
     <div style={styles.card}>
       <div>
-        <div style={styles.heading}>Replicate API Key</div>
+        <div style={styles.heading}>{provider.label} API Key</div>
         <p style={styles.sub}>
           Your key is stored locally in your browser and never sent anywhere
-          except directly to Replicate's API.
+          except directly to {provider.label}'s API.
         </p>
       </div>
 
@@ -153,7 +212,7 @@ function ApiKeySection() {
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder="r8_..."
+          placeholder={provider.key_hint}
           style={styles.input}
         />
       </div>
@@ -181,12 +240,12 @@ function ApiKeySection() {
       <div style={styles.footer}>
         Don't have a key?{" "}
         <a
-          href="https://replicate.com/account/api-tokens"
+          href={provider.key_url}
           target="_blank"
           rel="noopener noreferrer"
           style={styles.link}
         >
-          Get one from Replicate
+          Get one from {provider.label}
         </a>
       </div>
     </div>
@@ -263,10 +322,36 @@ function StorageSection() {
 }
 
 export default function Settings() {
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [active, setActive] = useState<string>("");
+
+  useEffect(() => {
+    listProviders().then(setProviders).catch(() => {});
+    getActiveProvider().then(setActive).catch(() => {});
+  }, []);
+
+  async function handleProviderChange(id: string) {
+    setActive(id);
+    try {
+      await setActiveProvider(id);
+    } catch {
+      // Keep the local selection; the backend write is best-effort.
+    }
+  }
+
+  const activeProvider = providers.find((p) => p.id === active);
+
   return (
     <div style={styles.page}>
       <h1 style={styles.title}>Settings</h1>
-      <ApiKeySection />
+      <ProviderSection
+        providers={providers}
+        active={active}
+        onChange={handleProviderChange}
+      />
+      {activeProvider && (
+        <ApiKeySection key={activeProvider.id} provider={activeProvider} />
+      )}
       <StorageSection />
     </div>
   );
