@@ -215,6 +215,7 @@ fn save_generated_image(
     let entry = ImageEntry {
         path: filepath.to_string_lossy().to_string(),
         id: uuid::Uuid::new_v4().to_string(),
+        title: Some(filename.clone()),
         filename,
         created_at: now,
         size_bytes: bytes.len() as u64,
@@ -292,8 +293,13 @@ pub fn list_generations(db: &Db) -> Result<Vec<Generation>, String> {
 
 /// Accept a client-side normalized PNG data URI, decode it, save the file, and
 /// insert a row into the images table. Returns the new ImageEntry so the
-/// frontend can select it immediately.
-pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String> {
+/// frontend can select it immediately. `title` is the original picked file name,
+/// kept for search/display since the on-disk name is a collision-free uuid.
+pub fn save_uploaded_image(
+    db: &Db,
+    data_uri: &str,
+    title: Option<&str>,
+) -> Result<ImageEntry, String> {
     use base64::Engine;
 
     let images_dir = db.storage_dir();
@@ -319,9 +325,16 @@ pub fn save_uploaded_image(db: &Db, data_uri: &str) -> Result<ImageEntry, String
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
+    let title = title
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| filename.clone());
+
     let entry = ImageEntry {
         path: filepath.to_string_lossy().to_string(),
         id: uuid::Uuid::new_v4().to_string(),
+        title: Some(title),
         filename,
         created_at: now,
         size_bytes: bytes.len() as u64,
@@ -340,6 +353,12 @@ pub struct ImageEntry {
     #[serde(default)]
     pub id: String,
     pub filename: String,
+    /// Human-readable name for search/display, distinct from the on-disk
+    /// `filename` (a collision-free uuid). For uploads it's the original picked
+    /// file name; for seeded/generated files it falls back to `filename`. `None`
+    /// on pre-title rows — the UI falls back to `filename`.
+    #[serde(default)]
+    pub title: Option<String>,
     pub created_at: i64,
     pub size_bytes: u64,
 }

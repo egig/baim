@@ -4,8 +4,10 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useLayoutEffect,
   memo,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Link, useLocation } from "react-router";
 import {
@@ -13,7 +15,9 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   createPrediction,
   createPredictions,
@@ -61,6 +65,66 @@ function fmtDate(seconds: number): string {
 function kindOf(filename: string): string {
   const m = filename.match(/\.([^.]+)$/);
   return (m ? m[1] : "IMG").toUpperCase();
+}
+
+/** The name shown and searched for an image: its human `title` when present
+ *  (uploads keep their original picked name; seeded files use their on-disk
+ *  name), falling back to the on-disk `filename` (a uuid for new uploads, or a
+ *  real name on legacy/pre-title rows). */
+function displayName(img: ImageEntry): string {
+  return img.title ?? img.filename;
+}
+
+// ---------- virtualized grid/list geometry ----------
+// The asset grid/list can hold thousands of tiles; we render only the visible
+// rows (plus overscan) via @tanstack/react-virtual. Row heights are *computed*
+// from the measured container width (tiles are square) rather than DOM-measured,
+// so there's no layout thrash when the side panel opens and the column count
+// changes.
+
+/** Min tile edge — mirrors the grid's `minmax(98px,1fr)`. */
+const GRID_MIN_TILE = 98;
+/** Gap between tiles (both axes) — mirrors the grid `gap`. */
+const GRID_GAP = 10;
+/** Height reserved below each tile for the filename + dimensions caption. */
+const GRID_CAPTION = 40;
+/** Fixed height of one list-view row (48px thumb + padding + row gap). */
+const LIST_ROW_SIZE = 72;
+/** Horizontal padding of the scroll container (each side). */
+const SCROLL_PAD_X = 22;
+/** Top padding of the scroll container; the virtualized list starts below it,
+ *  so it's the virtualizer's `scrollMargin`. */
+const SCROLL_PAD_TOP = 20;
+/** Rows rendered beyond the viewport, to avoid blank flashes while scrolling. */
+const OVERSCAN = 4;
+
+/** The content-box width of a scroll container (its `clientWidth` minus
+ *  horizontal padding). Tracked live via a `ResizeObserver` for gradual changes
+ *  (window resize), and re-measured *synchronously* whenever `watch` changes —
+ *  e.g. the side panel opening/closing, which resizes the container in the same
+ *  commit. The synchronous re-measure (a layout effect, before paint) keeps the
+ *  computed column count from lagging the container's new width by a frame,
+ *  which would otherwise flash mis-sized tiles. */
+function useContainerWidth(
+  ref: RefObject<HTMLElement | null>,
+  horizontalPad: number,
+  watch: unknown
+): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setWidth(Math.max(0, el.clientWidth - horizontalPad));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, horizontalPad]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setWidth(Math.max(0, el.clientWidth - horizontalPad));
+  }, [ref, horizontalPad, watch]);
+  return width;
 }
 
 /** Largest edge (px) we keep for an uploaded source image. Anything bigger is
@@ -133,7 +197,7 @@ const ImageCard = memo(function ImageCard({
       >
         <img
           src={convertFileSrc(img.path)}
-          alt={img.filename}
+          alt={displayName(img)}
           loading="lazy"
           onLoad={(e) => {
             const el = e.currentTarget;
@@ -187,7 +251,7 @@ const ImageCard = memo(function ImageCard({
           textOverflow: "ellipsis",
         }}
       >
-        {img.filename}
+        {displayName(img)}
       </div>
       <div
         style={{
@@ -449,7 +513,7 @@ const ImageRow = memo(function ImageRow({
       >
         <img
           src={convertFileSrc(img.path)}
-          alt={img.filename}
+          alt={displayName(img)}
           loading="lazy"
           onLoad={(e) => {
             const el = e.currentTarget;
@@ -483,7 +547,7 @@ const ImageRow = memo(function ImageRow({
               textOverflow: "ellipsis",
             }}
           >
-            {img.filename}
+            {displayName(img)}
           </span>
           <span
             style={{
@@ -638,16 +702,36 @@ export default function Assets() {
   // Both are ephemeral view preferences — they reset to their defaults on remount.
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [view, setView] = useState<AssetView>("grid");
+  // Free-text search over the in-memory rows (title for sources, prompt for AI).
+  // Client-side since virtualization keeps the whole dataset in memory.
+  const [search, setSearch] = useState("");
 
   // An image is AI-generated iff it's the output of a generation (`gens` is keyed
-  // by output path). Everything else is an uploaded source.
-  const visibleImages = images.filter((img) => {
-    if (filter === "all") return true;
-    const isAi = !!gens[img.path];
-    return filter === "ai" ? isAi : !isAi;
-  });
-  // Pending tiles are always in-flight AI generations — hide them under "source".
-  const visiblePending = filter === "source" ? [] : pending;
+  // by output path). Everything else is an uploaded source. The search query
+  // matches an image's title/filename or, for AI outputs, its source prompt.
+  // Memoized so filtering a large library doesn't re-run on every render.
+  const query = search.trim().toLowerCase();
+  const visibleImages = useMemo(
+    () =>
+      images.filter((img) => {
+        const isAi = !!gens[img.path];
+        if (filter === "ai" && !isAi) return false;
+        if (filter === "source" && isAi) return false;
+        if (query) {
+          const name = displayName(img).toLowerCase();
+          const prompt = gens[img.path]?.prompt?.toLowerCase() ?? "";
+          if (!name.includes(query) && !prompt.includes(query)) return false;
+        }
+        return true;
+      }),
+    [images, gens, filter, query]
+  );
+  // Pending tiles are always in-flight AI generations — hide them under "source",
+  // and while searching (they have no title/prompt to match yet).
+  const visiblePending = useMemo(
+    () => (filter === "source" || query ? [] : pending),
+    [filter, query, pending]
+  );
 
   /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
    *  settles, so callers can safely select the newly-created asset afterward. */
@@ -657,6 +741,24 @@ export default function Assets() {
         qc.invalidateQueries({ queryKey: imagesQuery.queryKey }),
         qc.invalidateQueries({ queryKey: generationsQuery.queryKey }),
       ]),
+    [qc]
+  );
+
+  /** Optimistically drop just-enqueued generations into the cache so their
+   *  placeholder tiles appear immediately, then kick the drain/refetch in the
+   *  background. We deliberately do NOT await: a generations refetch runs
+   *  `pollAndDrain`, which submits queued jobs to the provider (a slow network
+   *  round-trip) — awaiting it would freeze the button on "Menghasilkan…" for
+   *  the whole submit. The optimistic rows are `queued`, hence rendered as
+   *  placeholders, and reconcile with the DB when the background refetch lands. */
+  const enqueueGenerations = useCallback(
+    (created: Generation[]) => {
+      qc.setQueryData<Generation[]>(generationsQuery.queryKey, (old) =>
+        old ? [...old, ...created] : created
+      );
+      void qc.invalidateQueries({ queryKey: generationsQuery.queryKey });
+      void qc.invalidateQueries({ queryKey: imagesQuery.queryKey });
+    },
     [qc]
   );
 
@@ -795,7 +897,9 @@ export default function Assets() {
     setError(null);
     try {
       const dataUri = await fileToDataUri(file);
-      const saved = await saveImage(dataUri);
+      // Preserve the original picked name as the searchable/displayed title; the
+      // file on disk is a collision-free uuid.
+      const saved = await saveImage(dataUri, file.name);
       await refresh();
       setSelectedPath(saved.path);
       setVariantOpen(true);
@@ -819,8 +923,12 @@ export default function Assets() {
     try {
       // Enqueue and return immediately. The backend records a `queued` row keyed
       // by the source image id; the drainer submits it to the provider later.
-      await createPrediction(variantPrompt.trim(), providerId, selectedImage?.id);
-      await refresh();
+      const gen = await createPrediction(
+        variantPrompt.trim(),
+        providerId,
+        selectedImage?.id
+      );
+      enqueueGenerations([gen]);
       setVariantOpen(false);
       setVariantPrompt("");
     } catch (err) {
@@ -845,8 +953,8 @@ export default function Assets() {
         selectedTemplates.has(t.id)
       ).map((t) => t.prompt);
       // One backend call enqueues one queued generation per template.
-      await createPredictions(prompts, providerId, selectedImage?.id);
-      await refresh();
+      const gens = await createPredictions(prompts, providerId, selectedImage?.id);
+      enqueueGenerations(gens);
       setSelectedTemplates(new Set());
       setVariantOpen(false);
       setVariantPrompt("");
@@ -875,12 +983,13 @@ export default function Assets() {
       const prompts = GENERATION_TEMPLATES.filter((t) =>
         selectedTemplates.has(t.id)
       ).map((t) => t.prompt);
+      const all: Generation[] = [];
       for (const path of selectedPaths) {
         const img = images.find((i) => i.path === path);
         if (!img) continue;
-        await createPredictions(prompts, providerId, img.id);
+        all.push(...(await createPredictions(prompts, providerId, img.id)));
       }
-      await refresh();
+      enqueueGenerations(all);
       setSelectMode(false);
       setSelectedPaths(new Set());
       setSelectedTemplates(new Set());
@@ -893,6 +1002,11 @@ export default function Assets() {
 
   async function del() {
     if (!selectedPath || deleting) return;
+    const confirmed = await ask(
+      "Hapus aset ini secara permanen? Tindakan ini tidak bisa dibatalkan.",
+      { title: "Hapus aset", kind: "warning" }
+    );
+    if (!confirmed) return;
     setDeleting(true);
     setError(null);
     try {
@@ -914,7 +1028,7 @@ export default function Assets() {
   const detail = selectedImage
     ? {
         preview: convertFileSrc(selectedImage.path),
-        name: selectedImage.filename,
+        name: displayName(selectedImage),
         kind: kindOf(selectedImage.filename),
         dims: dims[selectedImage.path]
           ? `${dims[selectedImage.path].w}×${dims[selectedImage.path].h}`
@@ -945,6 +1059,47 @@ export default function Assets() {
   const bulkOpen = selectMode && selectedPaths.size > 0;
   const panelOpen = bulkOpen || (hasSelection && !!detail);
   const bulkJobCount = selectedPaths.size * selectedTemplates.size;
+
+  // --- Virtualization: render only the visible rows of the grid/list. Both
+  // views draw from one flat item list (pending placeholders first, then
+  // images), so counts and scroll stay consistent across the grid↔list toggle.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // `panelOpen` resizes the scroll container in the same commit; pass it so the
+  // width (and thus column count) is re-measured before paint, avoiding a
+  // one-frame flash of mis-sized tiles when the detail panel toggles.
+  const contentWidth = useContainerWidth(scrollRef, SCROLL_PAD_X * 2, panelOpen);
+  const columns = Math.max(
+    1,
+    Math.floor((contentWidth + GRID_GAP) / (GRID_MIN_TILE + GRID_GAP))
+  );
+  const tileWidth = (contentWidth - (columns - 1) * GRID_GAP) / columns;
+  const gridRowSize = tileWidth + GRID_CAPTION + GRID_GAP;
+
+  type Item =
+    | { kind: "pending"; gen: Generation }
+    | { kind: "image"; img: ImageEntry };
+  const items = useMemo<Item[]>(
+    () => [
+      ...visiblePending.map((gen) => ({ kind: "pending" as const, gen })),
+      ...visibleImages.map((img) => ({ kind: "image" as const, img })),
+    ],
+    [visiblePending, visibleImages]
+  );
+
+  const isGrid = view === "grid";
+  const rowCount = isGrid ? Math.ceil(items.length / columns) : items.length;
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => (isGrid ? gridRowSize : LIST_ROW_SIZE),
+    overscan: OVERSCAN,
+    scrollMargin: SCROLL_PAD_TOP,
+  });
+  // Recompute row offsets when the row model changes (view toggle, column count,
+  // or computed row height after a resize).
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, isGrid, gridRowSize, columns]);
 
   return (
     <>
@@ -994,6 +1149,24 @@ export default function Assets() {
             ]}
             value={filter}
             onChange={setFilter}
+          />
+
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cari nama atau prompt…"
+            style={{
+              height: 26,
+              width: 200,
+              border: "1px solid var(--line-3)",
+              borderRadius: "var(--r-control)",
+              padding: "0 10px",
+              fontFamily: "var(--font-ui)",
+              fontSize: 12,
+              color: "var(--ink-800)",
+              background: "var(--surface-0)",
+              outline: "none",
+            }}
           />
 
           <div style={{ flex: 1 }} />
@@ -1064,7 +1237,15 @@ export default function Assets() {
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {/* Grid */}
-          <div style={{ overflow: "auto", padding: "20px 22px 32px", minWidth: 0, width: panelOpen ? "476px" : "100%" }}>
+          <div
+            ref={scrollRef}
+            style={{
+              overflow: "auto",
+              padding: `${SCROLL_PAD_TOP}px ${SCROLL_PAD_X}px 32px`,
+              minWidth: 0,
+              width: panelOpen ? "476px" : "100%",
+            }}
+          >
             {images.length === 0 ? (
               <div
                 style={{
@@ -1105,59 +1286,96 @@ export default function Assets() {
                     : "Belum ada gambar AI."}
                 </div>
               </div>
-            ) : view === "grid" ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill,minmax(98px,1fr))",
-                  gap: 10,
-                  alignContent: "start",
-                }}
-              >
-                {visiblePending.map((gen) => (
-                  <PendingCard key={gen.id} srcPath={srcPathOf(gen)} />
-                ))}
-                {visibleImages.map((img) => (
-                  <ImageCard
-                    key={img.path}
-                    img={img}
-                    selected={
-                      selectMode
-                        ? selectedPaths.has(img.path)
-                        : img.path === selectedPath
-                    }
-                    dim={dims[img.path]}
-                    onSelect={selectMode ? togglePathSelection : selectAsset}
-                    onLoad={handleImageLoad}
-                  />
-                ))}
-              </div>
             ) : (
               <div
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
+                  height: rowVirtualizer.getTotalSize(),
+                  position: "relative",
+                  width: "100%",
                 }}
               >
-                {visiblePending.map((gen) => (
-                  <PendingRow key={gen.id} srcPath={srcPathOf(gen)} />
-                ))}
-                {visibleImages.map((img) => (
-                  <ImageRow
-                    key={img.path}
-                    img={img}
-                    isAi={!!gens[img.path]}
-                    selected={
-                      selectMode
-                        ? selectedPaths.has(img.path)
-                        : img.path === selectedPath
-                    }
-                    dim={dims[img.path]}
-                    onSelect={selectMode ? togglePathSelection : selectAsset}
-                    onLoad={handleImageLoad}
-                  />
-                ))}
+                {rowVirtualizer.getVirtualItems().map((vr) => {
+                  // `scrollMargin` (the container's top padding) is baked into
+                  // `vr.start`; subtract it to position within the sizer.
+                  const offset = vr.start - SCROLL_PAD_TOP;
+                  if (isGrid) {
+                    const start = vr.index * columns;
+                    const rowItems = items.slice(start, start + columns);
+                    return (
+                      <div
+                        key={vr.key}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          transform: `translateY(${offset}px)`,
+                          display: "grid",
+                          gridTemplateColumns: `repeat(${columns}, minmax(0,1fr))`,
+                          gap: GRID_GAP,
+                          alignContent: "start",
+                        }}
+                      >
+                        {rowItems.map((it) =>
+                          it.kind === "pending" ? (
+                            <PendingCard
+                              key={it.gen.id}
+                              srcPath={srcPathOf(it.gen)}
+                            />
+                          ) : (
+                            <ImageCard
+                              key={it.img.path}
+                              img={it.img}
+                              selected={
+                                selectMode
+                                  ? selectedPaths.has(it.img.path)
+                                  : it.img.path === selectedPath
+                              }
+                              dim={dims[it.img.path]}
+                              onSelect={
+                                selectMode ? togglePathSelection : selectAsset
+                              }
+                              onLoad={handleImageLoad}
+                            />
+                          )
+                        )}
+                      </div>
+                    );
+                  }
+                  const it = items[vr.index];
+                  return (
+                    <div
+                      key={vr.key}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${offset}px)`,
+                        paddingBottom: 6,
+                      }}
+                    >
+                      {it.kind === "pending" ? (
+                        <PendingRow srcPath={srcPathOf(it.gen)} />
+                      ) : (
+                        <ImageRow
+                          img={it.img}
+                          isAi={!!gens[it.img.path]}
+                          selected={
+                            selectMode
+                              ? selectedPaths.has(it.img.path)
+                              : it.img.path === selectedPath
+                          }
+                          dim={dims[it.img.path]}
+                          onSelect={
+                            selectMode ? togglePathSelection : selectAsset
+                          }
+                          onLoad={handleImageLoad}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

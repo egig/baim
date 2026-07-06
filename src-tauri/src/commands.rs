@@ -122,8 +122,9 @@ pub async fn delete_image(state: tauri::State<'_, Db>, path: String) -> Result<(
 pub async fn save_uploaded_image(
     state: tauri::State<'_, Db>,
     data_uri: String,
+    title: Option<String>,
 ) -> Result<ImageEntry, String> {
-    generation::save_uploaded_image(&*state, &data_uri)
+    generation::save_uploaded_image(&*state, &data_uri, title.as_deref())
 }
 
 #[tauri::command]

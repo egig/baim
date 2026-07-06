@@ -86,7 +86,8 @@ function mergeById(
 /** Derived views over the raw generation list, computed by the assets page.
  *  `gens` keyed by output path (source-prompt lookup); `childrenBySource`
  *  grouped by source image id (oldest first) for the detail panel's lineage;
- *  `pending` for the in-progress placeholder tiles in the grid. */
+ *  `pending` (queued *or* in-flight) for the placeholder tiles in the grid —
+ *  queued jobs render immediately, before the drainer submits them. */
 export interface DerivedGenerations {
   gens: Record<string, Generation>;
   childrenBySource: Record<string, Generation[]>;
@@ -105,7 +106,7 @@ export function deriveGenerations(
   for (const list of Object.values(childrenBySource)) {
     list.sort((a, b) => a.created_at - b.created_at);
   }
-  const pending = generations.filter((g) => g.status === "pending");
+  const pending = generations.filter(isActive);
   return { gens, childrenBySource, pending };
 }
 

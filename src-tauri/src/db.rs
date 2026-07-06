@@ -44,6 +44,7 @@ impl Db {
                 path TEXT PRIMARY KEY,
                 id TEXT,
                 filename TEXT NOT NULL,
+                title TEXT,
                 created_at INTEGER NOT NULL,
                 size_bytes INTEGER NOT NULL
             );
@@ -77,6 +78,7 @@ impl Db {
             [],
         );
         let _ = conn.execute("ALTER TABLE images ADD COLUMN id TEXT", []);
+        let _ = conn.execute("ALTER TABLE images ADD COLUMN title TEXT", []);
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
 
         // Index on the source link, created after the column is guaranteed to exist.
@@ -229,8 +231,8 @@ impl Db {
     pub fn insert_image(&self, entry: &ImageEntry) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT OR IGNORE INTO images (path, id, filename, created_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![entry.path, entry.id, entry.filename, entry.created_at, entry.size_bytes],
+            "INSERT OR IGNORE INTO images (path, id, filename, title, created_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![entry.path, entry.id, entry.filename, entry.title, entry.created_at, entry.size_bytes],
         )
         .map_err(|e| format!("Failed to insert image: {}", e))?;
         Ok(())
@@ -241,15 +243,16 @@ impl Db {
     pub fn find_image_by_id(&self, id: &str) -> Option<ImageEntry> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT path, id, filename, created_at, size_bytes FROM images WHERE id = ?1",
+            "SELECT path, id, filename, title, created_at, size_bytes FROM images WHERE id = ?1",
             params![id],
             |row| {
                 Ok(ImageEntry {
                     path: row.get(0)?,
                     id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     filename: row.get(2)?,
-                    created_at: row.get(3)?,
-                    size_bytes: row.get::<_, i64>(4)? as u64,
+                    title: row.get(3)?,
+                    created_at: row.get(4)?,
+                    size_bytes: row.get::<_, i64>(5)? as u64,
                 })
             },
         )
@@ -267,7 +270,7 @@ impl Db {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT path, id, filename, created_at, size_bytes FROM images ORDER BY created_at DESC",
+                "SELECT path, id, filename, title, created_at, size_bytes FROM images ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -277,8 +280,9 @@ impl Db {
                     path: row.get(0)?,
                     id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     filename: row.get(2)?,
-                    created_at: row.get(3)?,
-                    size_bytes: row.get::<_, i64>(4)? as u64,
+                    title: row.get(3)?,
+                    created_at: row.get(4)?,
+                    size_bytes: row.get::<_, i64>(5)? as u64,
                 })
             })
             .map_err(|e| format!("Failed to query images: {}", e))?
@@ -484,13 +488,15 @@ impl Db {
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
 
+                    let filename = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     let image_entry = ImageEntry {
                         path: path.to_string_lossy().to_string(),
                         id: uuid::Uuid::new_v4().to_string(),
-                        filename: path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default(),
+                        title: Some(filename.clone()),
+                        filename,
                         created_at: created,
                         size_bytes: metadata.len(),
                     };

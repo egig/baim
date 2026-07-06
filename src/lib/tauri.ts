@@ -5,6 +5,10 @@ export interface ImageEntry {
   /** Stable id used to link generations back to this image as their source. */
   id: string;
   filename: string;
+  /** Human-readable name for search/display (original upload name), distinct
+   *  from the on-disk uuid `filename`. `null` on pre-title rows — fall back to
+   *  `filename`. */
+  title: string | null;
   created_at: number;
   size_bytes: number;
 }
@@ -120,8 +124,16 @@ export async function setApiKey(
   return invoke<void>("set_api_key", { provider: providerId, key });
 }
 
-export async function saveImage(dataUri: string): Promise<ImageEntry> {
-  return invoke<ImageEntry>("save_uploaded_image", { dataUri });
+/** Save an uploaded image. `title` is the original picked file name, kept for
+ *  search/display (the on-disk name is a collision-free uuid). */
+export async function saveImage(
+  dataUri: string,
+  title?: string
+): Promise<ImageEntry> {
+  return invoke<ImageEntry>("save_uploaded_image", {
+    dataUri,
+    title: title ?? null,
+  });
 }
 
 export async function getStorageDir(): Promise<string> {
