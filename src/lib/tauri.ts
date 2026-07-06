@@ -9,34 +9,49 @@ export interface ImageEntry {
   size_bytes: number;
 }
 
+/** Enqueue a single generation (status `queued`) referencing its source image by
+ *  id. The queue drainer submits it to the provider later. */
 export async function createPrediction(
-  dataUri: string,
   prompt: string,
   provider: string,
   sourceId?: string
 ): Promise<Generation> {
   return invoke<Generation>("create_prediction", {
-    dataUri,
     prompt,
     provider,
     sourceId: sourceId ?? null,
   });
 }
 
-/** Create one generation per prompt in a single backend call, sharing one
- *  source image and provider. Powers batch generation from selected templates. */
+/** Enqueue one generation per prompt in a single backend call, sharing one
+ *  source image and provider. Powers batch (template / bulk) generation. */
 export async function createPredictions(
-  dataUri: string,
   prompts: string[],
   provider: string,
   sourceId?: string
 ): Promise<Generation[]> {
   return invoke<Generation[]>("create_predictions", {
-    dataUri,
     prompts,
     provider,
     sourceId: sourceId ?? null,
   });
+}
+
+/** Drain the queue: submit up to `limit` of the oldest queued jobs to their
+ *  provider, promoting them to `pending`. Called each poll tick with the number
+ *  of free in-flight slots so concurrency stays capped. */
+export async function submitQueued(limit: number): Promise<Generation[]> {
+  return invoke<Generation[]>("submit_queued", { limit });
+}
+
+/** Drop every queued job ("Clear queue"). In-flight jobs finish. */
+export async function clearQueue(): Promise<void> {
+  return invoke<void>("clear_queue");
+}
+
+/** Re-enqueue an existing generation (Retry) as a fresh queued job. */
+export async function requeueGeneration(id: string): Promise<Generation> {
+  return invoke<Generation>("requeue_generation", { id });
 }
 
 export async function refreshGeneration(id: string): Promise<Generation> {
@@ -56,7 +71,7 @@ export interface Generation {
   prompt: string;
   input_data_uri: string;
   provider: string;
-  status: "pending" | "succeeded" | "failed";
+  status: "queued" | "pending" | "succeeded" | "failed";
   poll_url: string | null;
   output_path: string | null;
   error: string | null;

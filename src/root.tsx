@@ -1,5 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router";
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { generationsQuery, isActive } from "./lib/queries";
 
 /* ---------- shared primitives ---------- */
 
@@ -127,11 +129,22 @@ const iconLibrary = (
   </svg>
 );
 
-
+const iconQueue = (
+  <svg width="15" height="15" viewBox="0 0 15 15" style={{ color: "var(--ink-700)" }}>
+    {strokePath("M2.5 3.5h10M2.5 7.5h10M2.5 11.5h10")}
+  </svg>
+);
 
 /* ---------- shell ---------- */
 
 export default function Root() {
+  // Observing the queue engine from the always-mounted shell keeps it polling
+  // and draining on every route; the count drives the sidebar badge.
+  const { data: activeCount = 0 } = useQuery({
+    ...generationsQuery,
+    select: (gens) => gens.filter(isActive).length,
+  });
+
   return (
     <div className="assets-app" style={{ height: "100vh", display: "flex" }}>
       {/* Sidebar */}
@@ -179,6 +192,12 @@ export default function Root() {
         {/* Nav */}
         <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
           <NavItem to="/" label="Daftar Gambar" icon={iconLibrary} />
+          <NavItem
+            to="/generations"
+            label="Antrean"
+            icon={iconQueue}
+            count={activeCount > 0 ? activeCount : undefined}
+          />
         </div>
 
               

@@ -6,6 +6,7 @@ import "./index.css";
 import Root from "./root";
 import Settings from "./routes/settings";
 import Assets, { loader as assetsLoader } from "./routes/assets";
+import Generations from "./routes/generations";
 
 const queryClient = new QueryClient();
 
@@ -14,6 +15,7 @@ const router = createMemoryRouter([
     element: <Root />,
     children: [
       { path: "/settings", element: <Settings /> },
+      { path: "/generations", element: <Generations /> },
       { path: "/", element: <Assets />, loader: assetsLoader(queryClient) },
     ],
   },

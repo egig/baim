@@ -5,30 +5,54 @@ use crate::generation;
 use crate::generation::{Generation, ImageEntry};
 use crate::provider::{self, ProviderInfo};
 
+/// Enqueue a single generation (status `queued`) referencing its source image by
+/// id. The queue drainer (`submit_queued`) submits it to the provider later.
 #[tauri::command]
-pub async fn create_prediction(
+pub fn create_prediction(
     state: tauri::State<'_, Db>,
-    data_uri: String,
     prompt: String,
     provider: String,
     source_id: Option<String>,
 ) -> Result<Generation, String> {
-    generation::create_prediction(&*state, &data_uri, &prompt, &provider, source_id.as_deref())
-        .await
+    generation::create_prediction(&*state, &prompt, &provider, source_id.as_deref())
 }
 
-/// Create one generation per prompt in a single call, sharing one source image
-/// and provider. Powers batch generation from selected templates.
+/// Enqueue one generation per prompt, sharing one source image and provider.
+/// Powers batch (template / bulk) generation.
 #[tauri::command]
-pub async fn create_predictions(
+pub fn create_predictions(
     state: tauri::State<'_, Db>,
-    data_uri: String,
     prompts: Vec<String>,
     provider: String,
     source_id: Option<String>,
 ) -> Result<Vec<Generation>, String> {
-    generation::create_predictions(&*state, &data_uri, &prompts, &provider, source_id.as_deref())
-        .await
+    generation::create_predictions(&*state, &prompts, &provider, source_id.as_deref())
+}
+
+/// Drain the queue: submit up to `limit` of the oldest `queued` jobs to their
+/// provider, promoting them to `pending`. Called each poll tick with the number
+/// of free in-flight slots so concurrency stays capped.
+#[tauri::command]
+pub async fn submit_queued(
+    state: tauri::State<'_, Db>,
+    limit: usize,
+) -> Result<Vec<Generation>, String> {
+    generation::submit_queued(&*state, limit).await
+}
+
+/// Drop every `queued` job ("Clear queue"). In-flight jobs finish.
+#[tauri::command]
+pub fn clear_queue(state: tauri::State<'_, Db>) -> Result<(), String> {
+    generation::clear_queue(&*state)
+}
+
+/// Re-enqueue an existing generation (Retry) as a fresh `queued` job.
+#[tauri::command]
+pub fn requeue_generation(
+    state: tauri::State<'_, Db>,
+    id: String,
+) -> Result<Generation, String> {
+    generation::requeue_generation(&*state, &id)
 }
 
 #[tauri::command]

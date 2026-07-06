@@ -5,33 +5,26 @@ use crate::provider::{
     get_provider, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
 };
 
-/// Kick off a generation with the chosen provider. Async providers return a
-/// `pending` record with a poll URL (advanced later by `refresh_generation`);
-/// synchronous providers return the image immediately, which we save and record
-/// as `succeeded`. The chosen `provider_id` is persisted on the record so a
-/// later refresh knows which backend to poll.
-pub async fn create_prediction(
+/// Enqueue a single generation. Inserts a `queued` row referencing its source
+/// image by `source_id` (no inline image data — the bytes are read from disk at
+/// submit time). The queue drainer (`submit_queued`) later submits it to the
+/// provider. Returns the persisted record.
+pub fn create_prediction(
     db: &Db,
-    data_uri: &str,
     prompt: &str,
     provider_id: &str,
     source_id: Option<&str>,
 ) -> Result<Generation, String> {
-    let gen = create_one(db, data_uri, prompt, provider_id, source_id).await;
-    match &gen.error {
-        Some(err) if gen.status == "failed" => Err(err.clone()),
-        _ => Ok(gen),
-    }
+    let record = new_generation(prompt, "", provider_id, "queued", None, None, None, source_id);
+    db.upsert_generation(&record)?;
+    Ok(record)
 }
 
-/// Create one generation per prompt against the same source image and provider,
-/// server-side. Each becomes its own `pending` row advanced later by
-/// `refresh_generation`. A single failing prompt is recorded as a `failed` row
-/// and does not abort the rest. Returns every record (pending or failed) in
-/// prompt order.
-pub async fn create_predictions(
+/// Enqueue one generation per prompt against the same source image and provider.
+/// Each becomes its own `queued` row, drained later by `submit_queued`. Returns
+/// every record in prompt order.
+pub fn create_predictions(
     db: &Db,
-    data_uri: &str,
     prompts: &[String],
     provider_id: &str,
     source_id: Option<&str>,
@@ -41,86 +34,118 @@ pub async fn create_predictions(
     }
     let mut out = Vec::with_capacity(prompts.len());
     for prompt in prompts {
-        // Sequential: avoids bursting the provider's rate limits.
-        out.push(create_one(db, data_uri, prompt, provider_id, source_id).await);
+        out.push(create_prediction(db, prompt, provider_id, source_id)?);
     }
     Ok(out)
 }
 
-/// Kick off a single generation, always returning a persisted record. On failure
-/// the record is stored as `failed` with the error set, rather than an `Err`, so
-/// one bad prompt can't abort a batch. Shared by the singular and batch paths.
-async fn create_one(
-    db: &Db,
-    data_uri: &str,
-    prompt: &str,
-    provider_id: &str,
-    source_id: Option<&str>,
-) -> Generation {
-    match do_create(db, data_uri, prompt, provider_id, source_id).await {
-        Ok(gen) => gen,
-        Err(err) => {
-            let record = new_generation(
-                prompt,
-                data_uri,
-                provider_id,
-                "failed",
-                None,
-                None,
-                Some(err),
-                source_id,
-            );
-            let _ = db.upsert_generation(&record);
-            record
-        }
+/// Re-enqueue an existing generation (typically a `failed` one) as a fresh
+/// `queued` row cloning its source, prompt and provider. Powers per-row Retry.
+pub fn requeue_generation(db: &Db, id: &str) -> Result<Generation, String> {
+    let existing = db.load_generation(id).ok_or("Generation not found")?;
+    create_prediction(
+        db,
+        &existing.prompt,
+        &existing.provider,
+        existing.source_id.as_deref(),
+    )
+}
+
+/// Drop every `queued` generation (the "Clear queue" action). Already-submitted
+/// (`pending`) jobs are left to finish.
+pub fn clear_queue(db: &Db) -> Result<(), String> {
+    db.clear_queued()
+}
+
+/// Drain the queue: promote up to `limit` of the oldest `queued` rows to
+/// `pending` by submitting them to their provider. Called each poll tick by the
+/// frontend with `limit = K - in_flight`, so in-flight jobs never exceed K.
+/// Failures (bad key, missing source, provider error) mark that row `failed`
+/// without aborting the rest. Returns the advanced records.
+pub async fn submit_queued(db: &Db, limit: usize) -> Result<Vec<Generation>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let queued = db.list_queued(limit)?;
+    let mut out = Vec::with_capacity(queued.len());
+    for mut record in queued {
+        submit_one(db, &mut record).await;
+        out.push(record);
+    }
+    Ok(out)
+}
+
+/// Submit one queued row, always persisting the outcome. On any error the row is
+/// stored as `failed` (with the message) rather than propagating, so one bad job
+/// can't abort a drain pass.
+async fn submit_one(db: &Db, record: &mut Generation) {
+    if let Err(err) = do_submit(db, record).await {
+        record.status = "failed".to_string();
+        record.error = Some(err);
+        record.poll_url = None;
+        let _ = db.upsert_generation(record);
     }
 }
 
-async fn do_create(
-    db: &Db,
-    data_uri: &str,
-    prompt: &str,
-    provider_id: &str,
-    source_id: Option<&str>,
-) -> Result<Generation, String> {
-    let provider =
-        get_provider(provider_id).ok_or_else(|| format!("Unknown provider: {}", provider_id))?;
+async fn do_submit(db: &Db, record: &mut Generation) -> Result<(), String> {
+    let provider = get_provider(&record.provider)
+        .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
 
     let api_key = db
-        .read_api_key(provider_id)
-        .ok_or_else(|| format!("No API key set for {}", provider_id))?;
+        .read_api_key(&record.provider)
+        .ok_or_else(|| format!("No API key set for {}", record.provider))?;
+
+    let source_id = record
+        .source_id
+        .as_deref()
+        .ok_or("Queued generation has no source image")?;
+    let image = db
+        .find_image_by_id(source_id)
+        .ok_or("Source image no longer exists")?;
+    let data_uri = read_image_as_data_uri(&image.path)?;
 
     let outcome = provider
         .create(GenerateRequest {
-            prompt: prompt.to_string(),
-            image_data_uri: data_uri.to_string(),
+            prompt: record.prompt.clone(),
+            image_data_uri: data_uri,
             api_key,
         })
         .await?;
 
     match outcome {
         CreateOutcome::Pending { poll_url } => {
-            let record = new_generation(
-                prompt,
-                data_uri,
-                provider_id,
-                "pending",
-                Some(poll_url),
-                None,
-                None,
-                source_id,
-            );
-            let _ = db.upsert_generation(&record);
-            Ok(record)
+            record.status = "pending".to_string();
+            record.poll_url = Some(poll_url);
+            record.error = None;
+            db.upsert_generation(record)?;
+            Ok(())
         }
         CreateOutcome::Done { image_bytes, ext } => {
-            let mut record = new_generation(
-                prompt, data_uri, provider_id, "pending", None, None, None, source_id,
-            );
-            save_generated_image(db, &mut record, &image_bytes, &ext)?;
-            Ok(record)
+            // Synchronous provider: save immediately (sets status `succeeded`).
+            save_generated_image(db, record, &image_bytes, &ext)
         }
     }
+}
+
+/// Read a saved image file and encode it as a `data:` URI for the provider,
+/// picking the mime type from the file extension. Used at submit time to resolve
+/// a queued row's `source_id` back into the bytes the provider needs.
+fn read_image_as_data_uri(path: &str) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read source image: {}", e))?;
+    let mime = match std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "application/octet-stream",
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 /// Poll a stored `pending` generation once and advance it if the provider has

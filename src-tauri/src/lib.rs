@@ -55,6 +55,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::create_prediction,
             commands::create_predictions,
+            commands::submit_queued,
+            commands::clear_queue,
+            commands::requeue_generation,
             commands::refresh_generation,
             commands::list_providers,
             commands::get_active_provider,

@@ -236,6 +236,26 @@ impl Db {
         Ok(())
     }
 
+    /// Look up an image row by its stable `id`. Used when submitting a queued
+    /// generation, to resolve its `source_id` back to the file on disk.
+    pub fn find_image_by_id(&self, id: &str) -> Option<ImageEntry> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT path, id, filename, created_at, size_bytes FROM images WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ImageEntry {
+                    path: row.get(0)?,
+                    id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    filename: row.get(2)?,
+                    created_at: row.get(3)?,
+                    size_bytes: row.get::<_, i64>(4)? as u64,
+                })
+            },
+        )
+        .ok()
+    }
+
     pub fn delete_image_by_path(&self, path: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM images WHERE path = ?1", params![path])
@@ -355,6 +375,50 @@ impl Db {
             .collect();
 
         Ok(records)
+    }
+
+    /// The oldest `queued` generations (FIFO), up to `limit`. Drained by
+    /// `submit_queued`, which promotes each to `pending` by submitting it to the
+    /// provider. `input_data_uri` is empty for queued rows (the source is read
+    /// from disk at submit time via `source_id`).
+    pub fn list_queued(&self, limit: usize) -> Result<Vec<Generation>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at
+                 FROM generations WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?1",
+            )
+            .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let records = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(Generation {
+                    id: row.get(0)?,
+                    prompt: row.get(1)?,
+                    input_data_uri: row.get(2)?,
+                    provider: row.get(3)?,
+                    status: row.get(4)?,
+                    poll_url: row.get(5)?,
+                    output_path: row.get(6)?,
+                    error: row.get(7)?,
+                    source_id: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query queued: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(records)
+    }
+
+    /// Drop every `queued` generation. Backs the "Clear queue" action; rows that
+    /// have already advanced to `pending` (submitted) are left to finish.
+    pub fn clear_queued(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM generations WHERE status = 'queued'", [])
+            .map_err(|e| format!("Failed to clear queue: {}", e))?;
+        Ok(())
     }
 
     pub fn delete_generation_by_id(&self, id: &str) -> Result<(), String> {

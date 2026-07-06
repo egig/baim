@@ -1,5 +1,13 @@
-import { useRef, useState, useCallback, memo, type ReactNode } from "react";
-import { Link } from "react-router";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  memo,
+  type ReactNode,
+} from "react";
+import { Link, useLocation } from "react-router";
 import {
   useQuery,
   useQueryClient,
@@ -17,7 +25,11 @@ import {
   type ImageEntry,
   type Generation,
 } from "../lib/tauri";
-import { assetsQuery } from "../lib/queries";
+import {
+  imagesQuery,
+  generationsQuery,
+  deriveGenerations,
+} from "../lib/queries";
 import { GENERATION_TEMPLATES } from "../lib/templates";
 import { Button } from "../root";
 
@@ -49,19 +61,6 @@ function fmtDate(seconds: number): string {
 function kindOf(filename: string): string {
   const m = filename.match(/\.([^.]+)$/);
   return (m ? m[1] : "IMG").toUpperCase();
-}
-
-/** Read a saved image file's bytes back as a data URI, losslessly, so it can be
- *  sent to Replicate as the source for a new variant. */
-async function assetToDataUri(path: string): Promise<string> {
-  const res = await fetch(convertFileSrc(path));
-  const blob = await res.blob();
-  return await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(fr.result as string);
-    fr.onerror = () => reject(fr.error);
-    fr.readAsDataURL(blob);
-  });
 }
 
 /** Largest edge (px) we keep for an uploaded source image. Anything bigger is
@@ -205,7 +204,11 @@ const ImageCard = memo(function ImageCard({
 
 /** An in-progress generation: the source image dimmed under a spinning icon,
  *  shown until polling replaces it with the finished result. */
-const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
+const PendingCard = memo(function PendingCard({
+  srcPath,
+}: {
+  srcPath?: string;
+}) {
   return (
     <div style={{ position: "relative" }}>
       <div
@@ -218,18 +221,20 @@ const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
           background: "var(--fill-1)",
         }}
       >
-        <img
-          src={gen.input_data_uri}
-          alt=""
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            opacity: 0.35,
-          }}
-        />
+        {srcPath && (
+          <img
+            src={convertFileSrc(srcPath)}
+            alt=""
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              opacity: 0.35,
+            }}
+          />
+        )}
         <div
           style={{
             position: "absolute",
@@ -278,9 +283,11 @@ const PendingCard = memo(function PendingCard({ gen }: { gen: Generation }) {
  *  source; failed → a warning tile carrying the error message. */
 const VariantTile = memo(function VariantTile({
   gen,
+  srcPath,
   onOpen,
 }: {
   gen: Generation;
+  srcPath?: string;
   onOpen: (path: string) => void;
 }) {
   const clickable = gen.status === "succeeded" && !!gen.output_path;
@@ -315,11 +322,11 @@ const VariantTile = memo(function VariantTile({
           }}
         />
       )}
-      {gen.status === "pending" && (
+      {(gen.status === "pending" || gen.status === "queued") && (
         <>
-          {gen.input_data_uri && (
+          {srcPath && (
             <img
-              src={gen.input_data_uri}
+              src={convertFileSrc(srcPath)}
               alt=""
               style={{
                 position: "absolute",
@@ -511,7 +518,7 @@ const ImageRow = memo(function ImageRow({
 });
 
 /** In-progress generation rendered as a list row, mirroring `PendingCard`. */
-const PendingRow = memo(function PendingRow({ gen }: { gen: Generation }) {
+const PendingRow = memo(function PendingRow({ srcPath }: { srcPath?: string }) {
   return (
     <div
       style={{
@@ -536,18 +543,20 @@ const PendingRow = memo(function PendingRow({ gen }: { gen: Generation }) {
           background: "var(--fill-1)",
         }}
       >
-        <img
-          src={gen.input_data_uri}
-          alt=""
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            opacity: 0.35,
-          }}
-        />
+        {srcPath && (
+          <img
+            src={convertFileSrc(srcPath)}
+            alt=""
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              opacity: 0.35,
+            }}
+          />
+        )}
         <div
           style={{
             position: "absolute",
@@ -592,21 +601,38 @@ const PendingRow = memo(function PendingRow({ gen }: { gen: Generation }) {
 /** Prefetch the asset library into the query cache so navigation to "/" is
  *  gated on the first load only; repeat visits render instantly from cache. */
 export const loader = (qc: QueryClient) => async () => {
-  await qc.ensureQueryData(assetsQuery);
+  await Promise.all([
+    qc.ensureQueryData(imagesQuery),
+    qc.ensureQueryData(generationsQuery),
+  ]);
   return null;
 };
 
 export default function Assets() {
   const fileRef = useRef<HTMLInputElement>(null);
+  const location = useLocation();
 
   const qc = useQueryClient();
-  const { data } = useQuery(assetsQuery);
-  const { images, gens, childrenBySource, pending } = data ?? {
-    images: [],
-    gens: {},
-    childrenBySource: {},
-    pending: [],
-  };
+  const { data: images = [] } = useQuery(imagesQuery);
+  const { data: generations = [] } = useQuery(generationsQuery);
+  const { gens, childrenBySource, pending } = useMemo(
+    () => deriveGenerations(generations),
+    [generations]
+  );
+
+  // Image lookup by stable id, so pending placeholder tiles can render their
+  // (dimmed) source image from `source_id` — the inline data URI is no longer
+  // stored on generation rows.
+  const imgById = useMemo(() => {
+    const m = new Map<string, ImageEntry>();
+    for (const img of images) m.set(img.id, img);
+    return m;
+  }, [images]);
+  const srcPathOf = useCallback(
+    (gen: Generation) =>
+      gen.source_id ? imgById.get(gen.source_id)?.path : undefined,
+    [imgById]
+  );
 
   // View controls: filter by origin (source vs AI) and toggle grid/list layout.
   // Both are ephemeral view preferences — they reset to their defaults on remount.
@@ -626,12 +652,22 @@ export default function Assets() {
   /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
    *  settles, so callers can safely select the newly-created asset afterward. */
   const refresh = useCallback(
-    () => qc.invalidateQueries({ queryKey: assetsQuery.queryKey }),
+    () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: imagesQuery.queryKey }),
+        qc.invalidateQueries({ queryKey: generationsQuery.queryKey }),
+      ]),
     [qc]
   );
 
   const [dims, setDims] = useState<Record<string, Dims>>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  // Bulk-action selection: a Select mode where clicking tiles toggles membership
+  // in `selectedPaths` (instead of opening the detail panel), and the right panel
+  // becomes a bulk template picker that fans out across every selected image.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
   const [variantOpen, setVariantOpen] = useState(false);
   const [variantPrompt, setVariantPrompt] = useState("");
@@ -678,6 +714,53 @@ export default function Assets() {
     setDims((prev) =>
       prev[path] ? prev : { ...prev, [path]: { w, h } }
     );
+  }, []);
+
+  // Images and generations are now separate queries, so a just-finished variant
+  // (new image row) won't show in the grid until images refetch. When a
+  // generation references an output not yet in the image list, invalidate images
+  // to pull it in. Self-limiting: once refetched, the output is known and this
+  // stops firing.
+  useEffect(() => {
+    const known = new Set(images.map((i) => i.path));
+    const hasUnknownOutput = generations.some(
+      (g) => g.output_path && !known.has(g.output_path)
+    );
+    if (hasUnknownOutput) {
+      qc.invalidateQueries({ queryKey: imagesQuery.queryKey });
+    }
+  }, [generations, images, qc]);
+
+  // When the Generations page opens a finished variant, it navigates here with
+  // the target path in router state; select it once, then clear the state so a
+  // later back-navigation doesn't reselect it.
+  useEffect(() => {
+    const st = location.state as { selectPath?: string } | null;
+    if (st?.selectPath) {
+      selectAsset(st.selectPath);
+      window.history.replaceState({}, "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
+
+  // Toggle Select (bulk) mode. Entering it closes the single-asset detail; both
+  // transitions reset the multi-selection and any picked templates.
+  function toggleSelectMode() {
+    setSelectMode((m) => !m);
+    setSelectedPaths(new Set());
+    setSelectedTemplates(new Set());
+    setSelectedPath(null);
+    setVariantOpen(false);
+    setError(null);
+  }
+
+  const togglePathSelection = useCallback((path: string) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   }, []);
 
   function close() {
@@ -734,11 +817,9 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const src = await assetToDataUri(selectedPath!);
-      // Fire the prediction in async mode and return immediately. The backend
-      // records it as `pending`; the frontend does not block until it's done.
-      // The API key is read from the backend settings, not passed from here.
-      await createPrediction(src, variantPrompt.trim(), providerId, selectedImage?.id);
+      // Enqueue and return immediately. The backend records a `queued` row keyed
+      // by the source image id; the drainer submits it to the provider later.
+      await createPrediction(variantPrompt.trim(), providerId, selectedImage?.id);
       await refresh();
       setVariantOpen(false);
       setVariantPrompt("");
@@ -760,16 +841,49 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const src = await assetToDataUri(selectedPath!);
       const prompts = GENERATION_TEMPLATES.filter((t) =>
         selectedTemplates.has(t.id)
       ).map((t) => t.prompt);
-      // One backend call fans out into one pending generation per template.
-      await createPredictions(src, prompts, providerId, selectedImage?.id);
+      // One backend call enqueues one queued generation per template.
+      await createPredictions(prompts, providerId, selectedImage?.id);
       await refresh();
       setSelectedTemplates(new Set());
       setVariantOpen(false);
       setVariantPrompt("");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  /** Bulk generate: for every selected image, enqueue each selected template.
+   *  N images × M templates = N×M queued jobs, drained under the concurrency cap.
+   *  Afterwards, exit Select mode and clear the selection. */
+  async function generateBulk() {
+    if (generating || selectedTemplates.size === 0 || selectedPaths.size === 0) {
+      return;
+    }
+    if (!apiKey) {
+      setError(`Kunci API ${providerLabel} belum diatur.`);
+      return;
+    }
+
+    setGenerating(true);
+    setError(null);
+    try {
+      const prompts = GENERATION_TEMPLATES.filter((t) =>
+        selectedTemplates.has(t.id)
+      ).map((t) => t.prompt);
+      for (const path of selectedPaths) {
+        const img = images.find((i) => i.path === path);
+        if (!img) continue;
+        await createPredictions(prompts, providerId, img.id);
+      }
+      await refresh();
+      setSelectMode(false);
+      setSelectedPaths(new Set());
+      setSelectedTemplates(new Set());
     } catch (err) {
       setError(String(err));
     } finally {
@@ -825,6 +939,12 @@ export default function Assets() {
 
   const generateDisabled = generating || !variantPrompt.trim();
   const generateLabel = generating ? "Menghasilkan…" : "Hasilkan varian";
+
+  // The right panel shows the bulk picker in Select mode (once ≥1 image is
+  // picked), otherwise the single-asset detail. Both shrink the grid.
+  const bulkOpen = selectMode && selectedPaths.size > 0;
+  const panelOpen = bulkOpen || (hasSelection && !!detail);
+  const bulkJobCount = selectedPaths.size * selectedTemplates.size;
 
   return (
     <>
@@ -887,6 +1007,17 @@ export default function Assets() {
             onChange={setView}
           />
 
+          <Button
+            variant={selectMode ? "primary" : "outline"}
+            onClick={toggleSelectMode}
+          >
+            {selectMode
+              ? selectedPaths.size > 0
+                ? `${selectedPaths.size} dipilih`
+                : "Selesai"
+              : "Pilih"}
+          </Button>
+
           <Button variant="outline" onClick={onUploadClick}>
             <svg width="14" height="14" viewBox="0 0 15 15">
               <path
@@ -933,7 +1064,7 @@ export default function Assets() {
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           {/* Grid */}
-          <div style={{ overflow: "auto", padding: "20px 22px 32px", minWidth: 0, width: detail ? "476px" : "100%" }}>
+          <div style={{ overflow: "auto", padding: "20px 22px 32px", minWidth: 0, width: panelOpen ? "476px" : "100%" }}>
             {images.length === 0 ? (
               <div
                 style={{
@@ -984,15 +1115,19 @@ export default function Assets() {
                 }}
               >
                 {visiblePending.map((gen) => (
-                  <PendingCard key={gen.id} gen={gen} />
+                  <PendingCard key={gen.id} srcPath={srcPathOf(gen)} />
                 ))}
                 {visibleImages.map((img) => (
                   <ImageCard
                     key={img.path}
                     img={img}
-                    selected={img.path === selectedPath}
+                    selected={
+                      selectMode
+                        ? selectedPaths.has(img.path)
+                        : img.path === selectedPath
+                    }
                     dim={dims[img.path]}
-                    onSelect={selectAsset}
+                    onSelect={selectMode ? togglePathSelection : selectAsset}
                     onLoad={handleImageLoad}
                   />
                 ))}
@@ -1006,16 +1141,20 @@ export default function Assets() {
                 }}
               >
                 {visiblePending.map((gen) => (
-                  <PendingRow key={gen.id} gen={gen} />
+                  <PendingRow key={gen.id} srcPath={srcPathOf(gen)} />
                 ))}
                 {visibleImages.map((img) => (
                   <ImageRow
                     key={img.path}
                     img={img}
                     isAi={!!gens[img.path]}
-                    selected={img.path === selectedPath}
+                    selected={
+                      selectMode
+                        ? selectedPaths.has(img.path)
+                        : img.path === selectedPath
+                    }
                     dim={dims[img.path]}
-                    onSelect={selectAsset}
+                    onSelect={selectMode ? togglePathSelection : selectAsset}
                     onLoad={handleImageLoad}
                   />
                 ))}
@@ -1023,8 +1162,198 @@ export default function Assets() {
             )}
           </div>
 
+          {/* Bulk panel — template picker fanned across the multi-selection */}
+          {bulkOpen && (
+            <div
+              style={{
+                flex: 1,
+                minWidth: 380,
+                borderLeft: "1px solid var(--line-1)",
+                background: "var(--surface-1)",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "auto",
+              }}
+            >
+              <div
+                style={{
+                  padding: "16px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid var(--line-1)",
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
+                  Aksi massal · {selectedPaths.size} gambar
+                </span>
+                <div
+                  onClick={() => setSelectedPaths(new Set())}
+                  style={{
+                    fontSize: 12,
+                    color: "var(--indigo-600)",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Bersihkan
+                </div>
+              </div>
+
+              <div style={{ padding: "16px 18px" }}>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: ".04em",
+                    color: "var(--ink-350)",
+                    textTransform: "uppercase",
+                    marginBottom: 10,
+                  }}
+                >
+                  Pilih templat
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))",
+                    gap: 10,
+                    marginBottom: 14,
+                  }}
+                >
+                  {GENERATION_TEMPLATES.map((t) => {
+                    const isSelected = selectedTemplates.has(t.id);
+                    return (
+                      <div
+                        key={t.id}
+                        onClick={() => toggleTemplate(t.id)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <div
+                          style={{
+                            position: "relative",
+                            aspectRatio: "1",
+                            borderRadius: "var(--r-card)",
+                            overflow: "hidden",
+                            border: "1px solid var(--line-3)",
+                            background: "var(--fill-1)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {t.imagePreview ? (
+                            <img
+                              src={t.imagePreview}
+                              alt={t.name}
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                              }}
+                            />
+                          ) : (
+                            <svg
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              style={{ color: "var(--ink-350)" }}
+                            >
+                              <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                              <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" />
+                              <path d="M4 17l5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                          {isSelected && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                border: "1.5px solid var(--indigo-500)",
+                                borderRadius: "var(--r-card)",
+                                boxShadow: "0 0 0 1.5px var(--indigo-100)",
+                              }}
+                            />
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: isSelected ? "var(--indigo-600)" : "var(--ink-700)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {t.name}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--ink-500)",
+                    marginBottom: 12,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {selectedPaths.size} gambar × {selectedTemplates.size} templat ={" "}
+                  <strong style={{ color: "var(--ink-800)" }}>{bulkJobCount}</strong> tugas
+                </div>
+
+                <Button
+                  variant="primary"
+                  disabled={generating || bulkJobCount === 0}
+                  onClick={generateBulk}
+                >
+                  <svg width="14" height="14" viewBox="0 0 15 15">
+                    <path
+                      d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
+                      fill="#fff"
+                    />
+                  </svg>
+                  {generating ? "Mengantre…" : `Hasilkan ${bulkJobCount} varian`}
+                </Button>
+
+                {error && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      fontSize: 11.5,
+                      color: "var(--red-600)",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {error}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    marginTop: 12,
+                    fontSize: 11,
+                    color: "var(--ink-400)",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Tugas masuk antrean dan diproses maksimal 3 sekaligus. Pantau di
+                  halaman Antrean.
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Detail panel */}
-          {hasSelection && detail && (
+          {!selectMode && hasSelection && detail && (
             <div
               style={{
                 flex: 1,
@@ -1240,7 +1569,12 @@ export default function Assets() {
                       }}
                     >
                       {children.map((g) => (
-                        <VariantTile key={g.id} gen={g} onOpen={selectAsset} />
+                        <VariantTile
+                          key={g.id}
+                          gen={g}
+                          srcPath={selectedImage?.path}
+                          onOpen={selectAsset}
+                        />
                       ))}
                     </div>
                   </div>
@@ -1521,7 +1855,7 @@ export default function Assets() {
 
 /** Inline segmented control: a pill group where one option is active. Generic
  *  over the option value so it drives both the origin filter and the view toggle. */
-function Segmented<T extends string>({
+export function Segmented<T extends string>({
   options,
   value,
   onChange,
