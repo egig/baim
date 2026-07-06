@@ -41,8 +41,9 @@ import { Button } from "../root";
 
 type Dims = { w: number; h: number };
 
-/** Origin filter for the asset grid: everything, uploaded sources, or AI output. */
-type AssetFilter = "all" | "source" | "ai";
+/** Origin filter for the asset grid: everything, uploaded sources, AI output,
+ *  or source images that haven't produced any AI variant yet. */
+type AssetFilter = "all" | "source" | "ai" | "novariant";
 /** Layout for the asset library: tile grid or detailed row list. */
 type AssetView = "grid" | "list";
 
@@ -717,6 +718,11 @@ export default function Assets() {
         const isAi = !!gens[img.path];
         if (filter === "ai" && !isAi) return false;
         if (filter === "source" && isAi) return false;
+        // "Tanpa varian": uploaded sources that have no generation output yet.
+        if (filter === "novariant") {
+          if (isAi) return false;
+          if ((childrenBySource[img.id]?.length ?? 0) > 0) return false;
+        }
         if (query) {
           const name = displayName(img).toLowerCase();
           const prompt = gens[img.path]?.prompt?.toLowerCase() ?? "";
@@ -724,12 +730,14 @@ export default function Assets() {
         }
         return true;
       }),
-    [images, gens, filter, query]
+    [images, gens, childrenBySource, filter, query]
   );
-  // Pending tiles are always in-flight AI generations — hide them under "source",
-  // and while searching (they have no title/prompt to match yet).
+  // Pending tiles are always in-flight AI generations — hide them under
+  // source-only filters ("source"/"novariant"), and while searching (they have
+  // no title/prompt to match yet).
   const visiblePending = useMemo(
-    () => (filter === "source" || query ? [] : pending),
+    () =>
+      filter === "source" || filter === "novariant" || query ? [] : pending,
     [filter, query, pending]
   );
 
@@ -1146,6 +1154,7 @@ export default function Assets() {
               { value: "all", label: "Semua" },
               { value: "source", label: "Sumber" },
               { value: "ai", label: "AI" },
+              { value: "novariant", label: "Tanpa varian" },
             ]}
             value={filter}
             onChange={setFilter}
@@ -1283,6 +1292,8 @@ export default function Assets() {
                 <div style={{ fontSize: 13, color: "var(--ink-500)" }}>
                   {filter === "source"
                     ? "Tidak ada gambar sumber."
+                    : filter === "novariant"
+                    ? "Semua gambar sumber sudah punya varian."
                     : "Belum ada gambar AI."}
                 </div>
               </div>

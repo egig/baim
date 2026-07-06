@@ -15,6 +15,16 @@ import { Segmented } from "./assets";
 /** Which generation states the list is filtered to. */
 type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
 
+/** Trim, collapse whitespace, and truncate a prompt to a short preview on a word
+ *  boundary. The 2-line CSS clamp stays as a second safety net. */
+function shortPrompt(text: string): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  if (clean.length <= 140) return clean;
+  const cut = clean.slice(0, 140);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 100 ? cut.slice(0, lastSpace) : cut) + "…";
+}
+
 function fmtWhen(seconds: number): string {
   if (!seconds) return "—";
   return new Date(seconds * 1000).toLocaleString("id-ID", {
@@ -58,6 +68,13 @@ export default function Generations() {
 
   const imgById = new Map<string, ImageEntry>();
   for (const img of images) imgById.set(img.id, img);
+
+  /** The source image's display name for a generation row (title, falling back
+   *  to the on-disk filename), or "—" when there is no source. */
+  function sourceName(g: Generation): string {
+    const src = g.source_id ? imgById.get(g.source_id) : undefined;
+    return src ? src.title ?? src.filename : "—";
+  }
 
   const queuedCount = generations.filter((g) => g.status === "queued").length;
   const failed = generations.filter((g) => g.status === "failed");
@@ -278,7 +295,21 @@ export default function Generations() {
                     <div
                       style={{
                         fontSize: 12,
+                        fontWeight: 600,
                         color: "var(--ink-800)",
+                        lineHeight: 1.4,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {sourceName(g)}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 2,
+                        fontSize: 11,
+                        color: "var(--ink-500)",
                         lineHeight: 1.4,
                         overflow: "hidden",
                         display: "-webkit-box",
@@ -286,7 +317,7 @@ export default function Generations() {
                         WebkitBoxOrient: "vertical",
                       }}
                     >
-                      {g.prompt}
+                      {shortPrompt(g.prompt)}
                     </div>
                     <div
                       style={{
