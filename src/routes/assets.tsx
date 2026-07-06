@@ -46,6 +46,24 @@ type Dims = { w: number; h: number };
 type AssetFilter = "all" | "source" | "ai" | "novariant";
 /** Layout for the asset library: tile grid or detailed row list. */
 type AssetView = "grid" | "list";
+/** Sort key for the asset grid: date added or display name. */
+type SortKey = "date" | "name";
+/** Sort direction. */
+type SortDir = "asc" | "desc";
+
+/** The four sort states offered by the dropdown, in menu order. Each maps a
+ *  stable `value` (encoded `key-dir`) to its key, direction, and label. */
+const SORT_OPTIONS: {
+  value: string;
+  label: string;
+  key: SortKey;
+  dir: SortDir;
+}[] = [
+  { value: "date-desc", label: "Terbaru", key: "date", dir: "desc" },
+  { value: "date-asc", label: "Terlama", key: "date", dir: "asc" },
+  { value: "name-asc", label: "Nama A–Z", key: "name", dir: "asc" },
+  { value: "name-desc", label: "Nama Z–A", key: "name", dir: "desc" },
+];
 
 function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024) {
@@ -465,6 +483,82 @@ const VariantTile = memo(function VariantTile({
   );
 });
 
+/** Full-screen lightbox: a dark scrim with the image fit to the viewport.
+ *  Dismissed via Escape, backdrop click, or the close button — clicking the
+ *  image itself is swallowed so it doesn't count as a backdrop click. */
+const ImageViewer = memo(function ImageViewer({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt?: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.82)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "zoom-out",
+      }}
+    >
+      <img
+        src={src}
+        alt={alt ?? ""}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: "92vw",
+          maxHeight: "92vh",
+          objectFit: "contain",
+          borderRadius: "var(--r-card)",
+          cursor: "default",
+        }}
+      />
+      <div
+        onClick={onClose}
+        style={{
+          position: "absolute",
+          top: 18,
+          right: 18,
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          color: "#fff",
+          background: "rgba(255,255,255,.14)",
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 12 12">
+          <path
+            d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+});
+
 /** A single image rendered as a detailed row for the list view: thumbnail,
  *  filename with a Sumber/AI origin badge, and a metadata line. */
 const ImageRow = memo(function ImageRow({
@@ -703,6 +797,17 @@ export default function Assets() {
   // Both are ephemeral view preferences — they reset to their defaults on remount.
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [view, setView] = useState<AssetView>("grid");
+  // Sort order for the grid/list. Ephemeral like `filter`/`view`; defaults to
+  // newest-first, matching the DB's `ORDER BY created_at DESC`. Key and
+  // direction are picked together from the dropdown (`SORT_OPTIONS`).
+  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const changeSort = useCallback((value: string) => {
+    const opt = SORT_OPTIONS.find((o) => o.value === value);
+    if (!opt) return;
+    setSortKey(opt.key);
+    setSortDir(opt.dir);
+  }, []);
   // Free-text search over the in-memory rows (title for sources, prompt for AI).
   // Client-side since virtualization keeps the whole dataset in memory.
   const [search, setSearch] = useState("");
@@ -741,6 +846,29 @@ export default function Assets() {
     [filter, query, pending]
   );
 
+  // Sort the filtered images. Pending tiles are pinned first (see `items`) and
+  // never sorted. Name uses a locale-aware, case-insensitive, numeric compare
+  // (id locale, matching the app's date formatting) with `created_at` desc as a
+  // stable tie-breaker.
+  const sortedImages = useMemo(() => {
+    const sign = sortDir === "asc" ? 1 : -1;
+    const sorted = [...visibleImages];
+    sorted.sort((a, b) => {
+      if (sortKey === "name") {
+        const cmp = displayName(a).localeCompare(displayName(b), "id", {
+          sensitivity: "base",
+          numeric: true,
+        });
+        if (cmp !== 0) return cmp * sign;
+        return b.created_at - a.created_at;
+      }
+      const cmp = (a.created_at - b.created_at) * sign;
+      if (cmp !== 0) return cmp;
+      return b.created_at - a.created_at;
+    });
+    return sorted;
+  }, [visibleImages, sortKey, sortDir]);
+
   /** Re-fetch after a mutation. `invalidateQueries` resolves once the refetch
    *  settles, so callers can safely select the newly-created asset afterward. */
   const refresh = useCallback(
@@ -772,6 +900,10 @@ export default function Assets() {
 
   const [dims, setDims] = useState<Record<string, Dims>>({});
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Full-screen image lightbox: the resolved `<img src>` currently displayed, or
+  // null when closed. Independent of `selectedPath` so closing it leaves the
+  // detail-panel selection intact.
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
 
   // Bulk-action selection: a Select mode where clicking tiles toggles membership
   // in `selectedPaths` (instead of opening the detail panel), and the right panel
@@ -1089,9 +1221,9 @@ export default function Assets() {
   const items = useMemo<Item[]>(
     () => [
       ...visiblePending.map((gen) => ({ kind: "pending" as const, gen })),
-      ...visibleImages.map((img) => ({ kind: "image" as const, img })),
+      ...sortedImages.map((img) => ({ kind: "image" as const, img })),
     ],
-    [visiblePending, visibleImages]
+    [visiblePending, sortedImages]
   );
 
   const isGrid = view === "grid";
@@ -1111,6 +1243,9 @@ export default function Assets() {
 
   return (
     <>
+      {viewerSrc && (
+        <ImageViewer src={viewerSrc} onClose={() => setViewerSrc(null)} />
+      )}
       <input
         ref={fileRef}
         type="file"
@@ -1154,7 +1289,7 @@ export default function Assets() {
               { value: "all", label: "Semua" },
               { value: "source", label: "Sumber" },
               { value: "ai", label: "AI" },
-              { value: "novariant", label: "Tanpa varian" },
+              { value: "novariant", label: "Tanpa Varian" },
             ]}
             value={filter}
             onChange={setFilter}
@@ -1179,6 +1314,31 @@ export default function Assets() {
           />
 
           <div style={{ flex: 1 }} />
+
+          <select
+            value={`${sortKey}-${sortDir}`}
+            onChange={(e) => changeSort(e.target.value)}
+            title="Urutkan"
+            style={{
+              height: 26,
+              border: "1px solid var(--line-3)",
+              borderRadius: "var(--r-control)",
+              padding: "0 8px",
+              fontFamily: "var(--font-ui)",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--ink-700)",
+              background: "var(--surface-0)",
+              cursor: "pointer",
+              outline: "none",
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
 
           <Segmented
             options={[
@@ -1632,6 +1792,7 @@ export default function Assets() {
 
               <div style={{ padding: "16px 18px" }}>
                 <div
+                  onClick={() => setViewerSrc(detail.preview)}
                   style={{
                     position: "relative",
                     height: 230,
@@ -1639,6 +1800,7 @@ export default function Assets() {
                     overflow: "hidden",
                     border: "1px solid var(--line-3)",
                     background: "var(--fill-1)",
+                    cursor: "zoom-in",
                   }}
                 >
                   <img
@@ -1802,7 +1964,7 @@ export default function Assets() {
                           key={g.id}
                           gen={g}
                           srcPath={selectedImage?.path}
-                          onOpen={selectAsset}
+                          onOpen={(path) => setViewerSrc(convertFileSrc(path))}
                         />
                       ))}
                     </div>

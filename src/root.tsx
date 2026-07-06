@@ -135,6 +135,22 @@ const iconQueue = (
   </svg>
 );
 
+/* ---------- titlebar ---------- */
+
+function Titlebar() {
+  return (
+    <div
+      data-tauri-drag-region
+      style={{
+        height: 32,
+        flexShrink: 0,
+        background: "var(--surface-2)",
+        borderBottom: "1px solid var(--line-1)",
+      }}
+    />
+  );
+}
+
 /* ---------- shell ---------- */
 
 export default function Root() {
@@ -146,121 +162,124 @@ export default function Root() {
   });
 
   return (
-    <div className="assets-app" style={{ height: "100vh", display: "flex" }}>
-      {/* Sidebar */}
-      <div
-        style={{
-          width: 240,
-          flexShrink: 0,
-          background: "var(--surface-2)",
-          borderRight: "1px solid var(--line-1)",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {/* Brand */}
+    <div className="assets-app" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <Titlebar />
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {/* Sidebar */}
         <div
           style={{
-            margin: "12px 10px 10px",
-            padding: "7px 8px",
+            width: 240,
+            flexShrink: 0,
+            background: "var(--surface-2)",
+            borderRight: "1px solid var(--line-1)",
             display: "flex",
-            alignItems: "center",
-            gap: 9,
+            flexDirection: "column",
           }}
         >
+          {/* Brand */}
           <div
             style={{
-              width: 24,
-              height: 24,
-              borderRadius: 6,
-              background: "linear-gradient(150deg,#5e6ad2,#8b93e8)",
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
-            R
-          </div>
-          <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--ink-800)" }}>
-            Recraftory Business
-          </div>
-        </div>
-
-        {/* Nav */}
-        <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
-          <NavItem to="/" label="Daftar Gambar" icon={iconLibrary} />
-          <NavItem
-            to="/generations"
-            label="Antrean"
-            icon={iconQueue}
-            count={activeCount > 0 ? activeCount : undefined}
-          />
-        </div>
-
-              
-
-        <div style={{ flex: 1 }} />
-
-        {/* API Key link */}
-        <div
-          style={{
-            padding: "12px 14px",
-            borderTop: "1px solid var(--line-1)",
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-          }}
-        >
-          <Link
-            to="/settings"
-            style={{
-              textDecoration: "none",
+              margin: "12px 10px 10px",
+              padding: "7px 8px",
               display: "flex",
               alignItems: "center",
               gap: 9,
-              flex: 1,
             }}
           >
             <div
               style={{
-                width: 26,
-                height: 26,
-                borderRadius: 7,
-                background: "var(--indigo-100)",
-                color: "var(--indigo-500)",
+                width: 24,
+                height: 24,
+                borderRadius: 6,
+                background: "linear-gradient(150deg,#5e6ad2,#8b93e8)",
+                color: "#fff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 11.5,
+                fontSize: 12,
                 fontWeight: 700,
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 15 15">
-                {strokePath("M6.5 9.5A3 3 0 1 0 3 5.5a3 3 0 0 0 3.5 4v3.5h2v-2h2v-1.5h.5")}
-                {strokePath("M9 7.5h.01")}
-              </svg>
+              R
             </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-800)" }}>Pengaturan</div>
-              <div style={{ fontSize: 11, color: "var(--ink-500)" }}>API key &amp; penyimpanan</div>
+            <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--ink-800)" }}>
+              Recraftory Business
             </div>
-          </Link>
-        </div>
-      </div>
+          </div>
 
-      {/* Main content */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minWidth: 0,
-        }}
-      >
-        <Outlet />
+          {/* Nav */}
+          <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
+            <NavItem to="/" label="Daftar Gambar" icon={iconLibrary} />
+            <NavItem
+              to="/generations"
+              label="Antrean"
+              icon={iconQueue}
+              count={activeCount > 0 ? activeCount : undefined}
+            />
+          </div>
+
+              
+
+          <div style={{ flex: 1 }} />
+
+          {/* API Key link */}
+          <div
+            style={{
+              padding: "12px 14px",
+              borderTop: "1px solid var(--line-1)",
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+            }}
+          >
+            <Link
+              to="/settings"
+              style={{
+                textDecoration: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                flex: 1,
+              }}
+            >
+              <div
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 7,
+                  background: "var(--indigo-100)",
+                  color: "var(--indigo-500)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11.5,
+                  fontWeight: 700,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 15 15">
+                  {strokePath("M6.5 9.5A3 3 0 1 0 3 5.5a3 3 0 0 0 3.5 4v3.5h2v-2h2v-1.5h.5")}
+                  {strokePath("M9 7.5h.01")}
+                </svg>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-800)" }}>Pengaturan</div>
+                <div style={{ fontSize: 11, color: "var(--ink-500)" }}>API key &amp; penyimpanan</div>
+              </div>
+            </Link>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+          }}
+        >
+          <Outlet />
+        </div>
       </div>
     </div>
   );

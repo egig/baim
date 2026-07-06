@@ -78,3 +78,8 @@ body {
 .assets-app .assets-spin {
   animation: assets-spin 0.9s linear infinite;
 }
+
+/* Queue table rows (routes/generations.tsx) highlight on hover. */
+.assets-app .gen-row:hover {
+  background: var(--surface-2);
+}

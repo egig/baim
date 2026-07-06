@@ -35,7 +35,7 @@ function fmtWhen(seconds: number): string {
   });
 }
 
-/** Visual treatment per status: label + colors for the badge. */
+/** Visual treatment per status: label + colors for the pill. */
 function statusStyle(status: Generation["status"]): {
   label: string;
   color: string;
@@ -43,7 +43,7 @@ function statusStyle(status: Generation["status"]): {
 } {
   switch (status) {
     case "queued":
-      return { label: "Antre", color: "var(--ink-600)", bg: "var(--fill-1)" };
+      return { label: "Antre", color: "var(--ink-500)", bg: "var(--fill-1)" };
     case "pending":
       return {
         label: "Berjalan",
@@ -56,6 +56,34 @@ function statusStyle(status: Generation["status"]): {
       return { label: "Gagal", color: "#b91c1c", bg: "#fee2e2" };
   }
 }
+
+/** The uppercased file extension of a name, e.g. "IMG-01.jpg" → "JPG". */
+function fileKind(filename: string): string {
+  const m = filename.match(/\.([^.]+)$/);
+  return (m ? m[1] : "IMG").toUpperCase();
+}
+
+/** Reference-style colored chip for a file type — blue JPG, green PNG, etc.,
+ *  falling back to a neutral fill for anything unrecognized. */
+function kindChipStyle(kind: string): { color: string; bg: string } {
+  switch (kind) {
+    case "JPG":
+    case "JPEG":
+      return { color: "#1a56c4", bg: "#e8f0fe" };
+    case "PNG":
+      return { color: "#0f766e", bg: "#d9f2ee" };
+    case "PDF":
+      return { color: "#c0392b", bg: "#fdeaea" };
+    case "WEBP":
+      return { color: "#7c3aed", bg: "#f0e9fe" };
+    default:
+      return { color: "var(--ink-500)", bg: "var(--fill-1)" };
+  }
+}
+
+/** Shared grid track template for the header and every data row, so columns
+ *  stay aligned: Waktu · Sumber (thumb + nama + prompt) · Status. */
+const GRID_COLS = "128px minmax(0,1fr) 148px";
 
 export default function Generations() {
   const qc = useQueryClient();
@@ -197,7 +225,7 @@ export default function Generations() {
         )}
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", padding: "16px 20px 32px" }}>
+      <div style={{ flex: 1, overflow: "auto" }}>
         {visible.length === 0 ? (
           <div
             style={{
@@ -214,163 +242,238 @@ export default function Generations() {
               : "Tidak ada yang cocok dengan filter."}
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ padding: "0 0 32px" }}>
+            {/* Column header — sticky so labels stay while the list scrolls. */}
+            <div
+              style={{
+                position: "sticky",
+                top: 0,
+                zIndex: 1,
+                display: "grid",
+                gridTemplateColumns: GRID_COLS,
+                alignItems: "center",
+                gap: 16,
+                padding: "11px 14px",
+                background: "var(--surface-1)",
+                borderBottom: "1px solid var(--line-3)",
+                fontSize: 10.5,
+                fontWeight: 600,
+                letterSpacing: ".06em",
+                textTransform: "uppercase",
+                color: "var(--ink-400)",
+              }}
+            >
+              <div>Waktu</div>
+              <div>Sumber</div>
+              <div style={{ textAlign: "right" }}>Status</div>
+            </div>
+
             {visible.map((g) => {
               const badge = statusStyle(g.status);
               const thumb = thumbFor(g);
               const active = g.status === "queued" || g.status === "pending";
               const clickable = g.status === "succeeded" && !!g.output_path;
+              const name = sourceName(g);
+              const kind = fileKind(name);
+              const chip = kindChipStyle(kind);
               return (
                 <div
                   key={g.id}
+                  className="gen-row"
                   onClick={clickable ? () => openOutput(g) : undefined}
                   style={{
-                    display: "flex",
+                    display: "grid",
+                    gridTemplateColumns: GRID_COLS,
                     alignItems: "center",
-                    gap: 12,
-                    padding: "8px 10px",
-                    borderRadius: "var(--r-card)",
-                    border: "1px solid var(--line-3)",
-                    background: "var(--surface-0)",
+                    gap: 16,
+                    padding: "10px 14px",
+                    borderBottom: "1px solid var(--line-1)",
                     cursor: clickable ? "pointer" : "default",
                   }}
                 >
+                  {/* Waktu */}
                   <div
                     style={{
-                      position: "relative",
-                      width: 48,
-                      height: 48,
-                      flexShrink: 0,
-                      borderRadius: "var(--r-badge-sm)",
-                      overflow: "hidden",
-                      border: "1px solid var(--line-3)",
-                      background: "var(--fill-1)",
+                      fontSize: 11.5,
+                      color: "var(--ink-400)",
+                      fontVariantNumeric: "tabular-nums",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {thumb && (
-                      <img
-                        src={thumb}
-                        alt=""
-                        loading="lazy"
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          opacity: active ? 0.5 : 1,
-                        }}
-                      />
-                    )}
-                    {active && (
+                    {fmtWhen(g.created_at)}
+                  </div>
+
+                  {/* Sumber: thumbnail + (type chip + nama) + prompt */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "relative",
+                        width: 40,
+                        height: 40,
+                        flexShrink: 0,
+                        borderRadius: "var(--r-badge-sm)",
+                        overflow: "hidden",
+                        border: "1px solid var(--line-3)",
+                        background: "var(--fill-1)",
+                      }}
+                    >
+                      {thumb && (
+                        <img
+                          src={thumb}
+                          alt=""
+                          loading="lazy"
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            opacity: active ? 0.5 : 1,
+                          }}
+                        />
+                      )}
+                      {active && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <svg
+                            className="assets-spin"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            style={{ color: "var(--indigo-500)" }}
+                          >
+                            <path
+                              d="M21 12a9 9 0 1 1-6.219-8.56"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div
                         style={{
-                          position: "absolute",
-                          inset: 0,
                           display: "flex",
                           alignItems: "center",
-                          justifyContent: "center",
+                          gap: 7,
+                          minWidth: 0,
                         }}
                       >
-                        <svg
-                          className="assets-spin"
-                          width="18"
-                          height="18"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          style={{ color: "var(--indigo-500)" }}
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 9.5,
+                            fontWeight: 700,
+                            letterSpacing: ".03em",
+                            padding: "2px 5px",
+                            borderRadius: "var(--r-badge-sm)",
+                            color: chip.color,
+                            background: chip.bg,
+                          }}
                         >
-                          <path
-                            d="M21 12a9 9 0 1 1-6.219-8.56"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                          />
-                        </svg>
+                          {kind}
+                        </span>
+                        <span
+                          title={name}
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 12,
+                            fontWeight: 500,
+                            color: "var(--ink-800)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {name}
+                        </span>
                       </div>
-                    )}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: "var(--ink-800)",
-                        lineHeight: 1.4,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {sourceName(g)}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 2,
-                        fontSize: 11,
-                        color: "var(--ink-500)",
-                        lineHeight: 1.4,
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                    >
-                      {shortPrompt(g.prompt)}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 3,
-                        fontSize: 11,
-                        color: "var(--ink-400)",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {fmtWhen(g.created_at)}
-                      {g.status === "failed" && g.error ? ` · ${g.error}` : ""}
+                      <div
+                        title={g.prompt}
+                        style={{
+                          marginTop: 3,
+                          fontSize: 11.5,
+                          color: "var(--ink-500)",
+                          lineHeight: 1.4,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {g.status === "failed" && g.error ? (
+                          <span style={{ color: "#b91c1c" }}>{g.error}</span>
+                        ) : (
+                          shortPrompt(g.prompt)
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <span
+                  {/* Status pill (+ inline retry for failures) */}
+                  <div
                     style={{
-                      flexShrink: 0,
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: ".02em",
-                      padding: "3px 7px",
-                      borderRadius: "var(--r-badge-sm)",
-                      color: badge.color,
-                      background: badge.bg,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "flex-end",
+                      gap: 8,
                     }}
                   >
-                    {badge.label}
-                  </span>
-
-                  {g.status === "failed" && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRetry(g.id);
-                      }}
+                    {g.status === "failed" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRetry(g.id);
+                        }}
+                        style={{
+                          flexShrink: 0,
+                          height: 24,
+                          padding: "0 9px",
+                          border: "1px solid var(--line-4)",
+                          borderRadius: "var(--r-button)",
+                          background: "var(--surface-0)",
+                          color: "var(--ink-700)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: busy ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        Ulangi
+                      </button>
+                    )}
+                    <span
                       style={{
                         flexShrink: 0,
-                        height: 26,
-                        padding: "0 10px",
-                        border: "1px solid var(--line-4)",
-                        borderRadius: "var(--r-button)",
-                        background: "var(--surface-0)",
-                        color: "var(--ink-700)",
-                        fontSize: 11.5,
+                        fontSize: 11,
                         fontWeight: 600,
-                        cursor: busy ? "not-allowed" : "pointer",
+                        letterSpacing: ".01em",
+                        padding: "3px 10px",
+                        borderRadius: 9999,
+                        color: badge.color,
+                        background: badge.bg,
                       }}
                     >
-                      Ulangi
-                    </button>
-                  )}
+                      {badge.label}
+                    </span>
+                  </div>
                 </div>
               );
             })}

@@ -123,6 +123,16 @@ const styles = {
     fontSize: 11.5,
     color: "var(--ink-400)",
   },
+  divider: {
+    height: 1,
+    background: "var(--line-3)",
+    margin: "2px 0",
+  },
+  subheading: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--ink-800)",
+  },
   link: {
     color: "var(--indigo-500)",
     fontWeight: 600,
@@ -138,10 +148,12 @@ const styles = {
 function ProviderSection({
   providers,
   active,
+  activeProvider,
   onChange,
 }: {
   providers: ProviderInfo[];
   active: string;
+  activeProvider: ProviderInfo | undefined;
   onChange: (id: string) => void;
 }) {
   return (
@@ -150,7 +162,7 @@ function ProviderSection({
         <div style={styles.heading}>Image Provider</div>
         <p style={styles.sub}>
           Which AI backend generates image variants. Each provider uses its own
-          API key below.
+          API key.
         </p>
       </div>
 
@@ -171,6 +183,13 @@ function ProviderSection({
           ))}
         </select>
       </div>
+
+      {activeProvider && (
+        <>
+          <div style={styles.divider} />
+          <ApiKeySection key={activeProvider.id} provider={activeProvider} />
+        </>
+      )}
     </div>
   );
 }
@@ -221,9 +240,9 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   }
 
   return (
-    <div style={styles.card}>
+    <>
       <div>
-        <div style={styles.heading}>{provider.label} API Key</div>
+        <div style={styles.subheading}>{provider.label} API Key</div>
         <p style={styles.sub}>
           Your key is stored locally on this machine and never sent anywhere
           except directly to {provider.label}'s API.
@@ -282,7 +301,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
           Get one from {provider.label}
         </a>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -381,11 +400,9 @@ export default function Settings() {
       <ProviderSection
         providers={providers}
         active={active}
+        activeProvider={activeProvider}
         onChange={handleProviderChange}
       />
-      {activeProvider && (
-        <ApiKeySection key={activeProvider.id} provider={activeProvider} />
-      )}
       <StorageSection />
     </div>
   );

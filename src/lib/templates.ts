@@ -16,7 +16,7 @@ export const GENERATION_TEMPLATES: GenerationTemplate[] = [
     name: "Full product photo",
     imagePreview: "/img/gamis-full.png",
     prompt:
-      "A professional e-commerce product fashion photograph of an Indonesian woman, 155cm tall and weight 70kg with a realistic midsize/curvy build. The shot is cropped from the neck down to be faceless, focusing on the clothing. Elegant, confident, and improved upright posture. Clean, minimalist light gray background, soft studio lighting, mid-end commercial fashion catalog style, 1k resolution.",
+      "A professional e-commerce product fashion photograph of an Indonesian woman, 155cm tall and weight 70kg with a realistic midsize/curvy build. The shot is cropped from the neck down to toe to be faceless, focusing on the clothing. Elegant, confident, and improved upright posture. Clean, minimalist light gray background, soft studio lighting, mid-end commercial fashion catalog style, squared 1k resolution.",
   },
   {
     id: "flat-lay",
