@@ -162,7 +162,15 @@ export default function Root() {
   });
 
   return (
-    <div className="assets-app" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+    <div
+      className="assets-app"
+      style={{
+        height: "100vh",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <Titlebar />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* Sidebar */}
@@ -176,36 +184,6 @@ export default function Root() {
             flexDirection: "column",
           }}
         >
-          {/* Brand */}
-          <div
-            style={{
-              margin: "12px 10px 10px",
-              padding: "7px 8px",
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-            }}
-          >
-            <div
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 6,
-                background: "linear-gradient(150deg,#5e6ad2,#8b93e8)",
-                color: "#fff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              R
-            </div>
-            <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--ink-800)" }}>
-              Recraftory Business
-            </div>
-          </div>
 
           {/* Nav */}
           <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>

@@ -7,8 +7,15 @@ body {
   color: #191b1f;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 #root {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Design tokens for the asset library (routes/assets.tsx).

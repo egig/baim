@@ -1262,9 +1262,12 @@ export default function Assets() {
             alignItems: "center",
             padding: "0 20px",
             gap: 12,
+            // Below the window min-width the controls can't all fit; scroll the
+            // toolbar horizontally instead of clipping them off the right edge.
+            overflowX: "auto",
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>Daftar Gambar</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)", flexShrink: 0 }}>Daftar Gambar</div>
           <span
             style={{
               minWidth: 18,
@@ -1302,6 +1305,7 @@ export default function Assets() {
             style={{
               height: 26,
               width: 200,
+              flexShrink: 0,
               border: "1px solid var(--line-3)",
               borderRadius: "var(--r-control)",
               padding: "0 10px",
@@ -1321,6 +1325,7 @@ export default function Assets() {
             title="Urutkan"
             style={{
               height: 26,
+              flexShrink: 0,
               border: "1px solid var(--line-3)",
               borderRadius: "var(--r-control)",
               padding: "0 8px",
