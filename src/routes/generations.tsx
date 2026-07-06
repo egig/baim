@@ -201,6 +201,7 @@ export default function Generations() {
             {visible.map((g) => {
               const badge = statusStyle(g.status);
               const thumb = thumbFor(g);
+              const active = g.status === "queued" || g.status === "pending";
               const clickable = g.status === "succeeded" && !!g.output_path;
               return (
                 <div
@@ -240,12 +241,36 @@ export default function Generations() {
                           width: "100%",
                           height: "100%",
                           objectFit: "cover",
-                          opacity:
-                            g.status === "queued" || g.status === "pending"
-                              ? 0.5
-                              : 1,
+                          opacity: active ? 0.5 : 1,
                         }}
                       />
+                    )}
+                    {active && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <svg
+                          className="assets-spin"
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          style={{ color: "var(--indigo-500)" }}
+                        >
+                          <path
+                            d="M21 12a9 9 0 1 1-6.219-8.56"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </div>
                     )}
                   </div>
 
