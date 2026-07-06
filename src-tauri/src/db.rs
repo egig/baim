@@ -58,6 +58,7 @@ impl Db {
                 output_path TEXT,
                 error TEXT,
                 source_id TEXT,
+                logs TEXT,
                 created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS settings (
@@ -80,6 +81,7 @@ impl Db {
         let _ = conn.execute("ALTER TABLE images ADD COLUMN id TEXT", []);
         let _ = conn.execute("ALTER TABLE images ADD COLUMN title TEXT", []);
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE generations ADD COLUMN logs TEXT", []);
 
         // Index on the source link, created after the column is guaranteed to exist.
         conn.execute(
@@ -295,13 +297,14 @@ impl Db {
     pub fn upsert_generation(&self, gen: &Generation) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 poll_url = excluded.poll_url,
                 output_path = excluded.output_path,
-                error = excluded.error",
+                error = excluded.error,
+                logs = excluded.logs",
             params![
                 gen.id,
                 gen.prompt,
@@ -312,6 +315,7 @@ impl Db {
                 gen.output_path,
                 gen.error,
                 gen.source_id,
+                gen.logs,
                 gen.created_at,
             ],
         )
@@ -322,7 +326,7 @@ impl Db {
     pub fn load_generation(&self, id: &str) -> Option<Generation> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at
+            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at
              FROM generations WHERE id = ?1",
             params![id],
             |row| {
@@ -336,7 +340,8 @@ impl Db {
                     output_path: row.get(6)?,
                     error: row.get(7)?,
                     source_id: row.get(8)?,
-                    created_at: row.get(9)?,
+                    logs: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             },
         )
@@ -354,7 +359,7 @@ impl Db {
             .prepare(
                 "SELECT id, prompt,
                         CASE WHEN status = 'pending' THEN input_data_uri ELSE '' END AS input_data_uri,
-                        provider, status, poll_url, output_path, error, source_id, created_at
+                        provider, status, poll_url, output_path, error, source_id, logs, created_at
                  FROM generations ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -371,7 +376,8 @@ impl Db {
                     output_path: row.get(6)?,
                     error: row.get(7)?,
                     source_id: row.get(8)?,
-                    created_at: row.get(9)?,
+                    logs: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query generations: {}", e))?
@@ -389,7 +395,7 @@ impl Db {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, created_at
+                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at
                  FROM generations WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?1",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -406,7 +412,8 @@ impl Db {
                     output_path: row.get(6)?,
                     error: row.get(7)?,
                     source_id: row.get(8)?,
-                    created_at: row.get(9)?,
+                    logs: row.get(9)?,
+                    created_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query queued: {}", e))?

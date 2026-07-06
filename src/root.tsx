@@ -1,9 +1,86 @@
 import { Link, Outlet, useLocation } from "react-router";
-import type { ReactNode } from "react";
+import { memo, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { generationsQuery, isActive } from "./lib/queries";
 
 /* ---------- shared primitives ---------- */
+
+/** Full-screen lightbox: a dark scrim with the image fit to the viewport.
+ *  Dismissed via Escape, backdrop click, or the close button — clicking the
+ *  image itself is swallowed so it doesn't count as a backdrop click. Shared by
+ *  the assets library and the generation detail panel. */
+export const ImageViewer = memo(function ImageViewer({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt?: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.82)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "zoom-out",
+      }}
+    >
+      <img
+        src={src}
+        alt={alt ?? ""}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: "92vw",
+          maxHeight: "92vh",
+          objectFit: "contain",
+          borderRadius: "var(--r-card)",
+          cursor: "default",
+        }}
+      />
+      <div
+        onClick={onClose}
+        style={{
+          position: "absolute",
+          top: 18,
+          right: 18,
+          width: 34,
+          height: 34,
+          borderRadius: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          color: "#fff",
+          background: "rgba(255,255,255,.14)",
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 12 12">
+          <path
+            d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+});
 
 type ButtonVariant = "primary" | "outline" | "ghost" | "danger";
 

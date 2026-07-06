@@ -428,7 +428,10 @@ impl ImageProvider for GoogleProvider {
                 .or_else(|| find_text(&parsed))
                 .or_else(|| state.clone())
                 .unwrap_or_else(|| "Gemini batch job failed".to_string());
-            return Ok(PollOutcome::Failed { error: msg });
+            return Ok(PollOutcome::Failed {
+                error: msg,
+                logs: None,
+            });
         }
 
         // Success: the operation is done (without an error) or the batch reports a
@@ -436,14 +439,20 @@ impl ImageProvider for GoogleProvider {
         // instead, surface that.
         if done || ends("SUCCEEDED") {
             return match extract_image(&parsed) {
-                Ok((image_bytes, ext)) => Ok(PollOutcome::Done { image_bytes, ext }),
+                Ok((image_bytes, ext)) => Ok(PollOutcome::Done {
+                    image_bytes,
+                    ext,
+                    logs: None,
+                }),
                 Err(msg) => Ok(PollOutcome::Failed {
                     error: error.unwrap_or(msg),
+                    logs: None,
                 }),
             };
         }
 
-        // Still pending/running.
-        Ok(PollOutcome::Pending)
+        // Still pending/running. The Batch API has no human-readable log stream,
+        // so there are no logs to surface.
+        Ok(PollOutcome::Pending { logs: None })
     }
 }

@@ -22,11 +22,21 @@ pub enum CreateOutcome {
     Done { image_bytes: Vec<u8>, ext: String },
 }
 
-/// The result of polling a pending generation once.
+/// The result of polling a pending generation once. Each variant carries the
+/// provider's `logs` when available (Replicate streams a growing text blob;
+/// Google's Batch API has none, so it returns `None`), so the orchestrator can
+/// persist the latest logs on every poll — including while still pending.
 pub enum PollOutcome {
-    Pending,
-    Done { image_bytes: Vec<u8>, ext: String },
-    Failed { error: String },
+    Pending { logs: Option<String> },
+    Done {
+        image_bytes: Vec<u8>,
+        ext: String,
+        logs: Option<String>,
+    },
+    Failed {
+        error: String,
+        logs: Option<String>,
+    },
 }
 
 /// Metadata describing a provider, surfaced to the frontend so the settings UI

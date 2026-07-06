@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -9,7 +9,7 @@ import {
   type ImageEntry,
 } from "../lib/tauri";
 import { generationsQuery, imagesQuery } from "../lib/queries";
-import { Button } from "../root";
+import { Button, ImageViewer } from "../root";
 import { Segmented } from "./assets";
 
 /** Which generation states the list is filtered to. */
@@ -85,6 +85,333 @@ function kindChipStyle(kind: string): { color: string; bg: string } {
  *  stay aligned: Waktu · Sumber (thumb + nama + prompt) · Status. */
 const GRID_COLS = "128px minmax(0,1fr) 148px";
 
+/** Small uppercase section label inside the detail panel. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 10.5,
+        fontWeight: 600,
+        letterSpacing: ".04em",
+        color: "var(--ink-350)",
+        textTransform: "uppercase",
+        marginBottom: 8,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Right-side detail panel for one generation: source/output preview, status +
+ *  live provider logs, and (for failures) the full error with a retry action.
+ *  Replaces the old navigate-to-asset behavior — the "Buka gambar" button now
+ *  performs that navigation explicitly. Reads its generation live from the
+ *  parent (which re-derives it from `generationsQuery` every poll). */
+function GenerationDetail({
+  gen,
+  sourceImg,
+  busy,
+  onClose,
+  onOpenImage,
+  onViewImage,
+  onRetry,
+}: {
+  gen: Generation;
+  sourceImg: ImageEntry | undefined;
+  busy: boolean;
+  onClose: () => void;
+  onOpenImage: (path: string) => void;
+  onViewImage: (src: string) => void;
+  onRetry: (id: string) => void;
+}) {
+  // Escape closes the panel, matching the lightbox and the assets detail panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const active = gen.status === "queued" || gen.status === "pending";
+  const succeeded = gen.status === "succeeded" && !!gen.output_path;
+  const badge = statusStyle(gen.status);
+  const sourceSrc = sourceImg ? convertFileSrc(sourceImg.path) : null;
+  // Main preview: the generated output when finished, else the source image.
+  const mainSrc = succeeded ? convertFileSrc(gen.output_path!) : sourceSrc;
+  const logs = gen.logs?.trim() ? gen.logs : null;
+
+  // Auto-follow the tail of the log while it streams — but only when the user is
+  // already near the bottom, so a manual scroll-up to read isn't yanked back.
+  const logRef = useRef<HTMLPreElement>(null);
+  useLayoutEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+  }, [gen.logs]);
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minWidth: 380,
+        borderLeft: "1px solid var(--line-1)",
+        background: "var(--surface-1)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "auto",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: "16px 18px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid var(--line-1)",
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
+          Detail generasi
+        </span>
+        <div
+          onClick={onClose}
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            color: "var(--ink-400)",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path
+              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+              stroke="currentColor"
+              strokeWidth={1.4}
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      </div>
+
+      <div style={{ padding: "16px 18px" }}>
+        {/* Preview: output-for-succeeded / source otherwise (dimmed + spinner
+            while the job is still running). */}
+        <div
+          onClick={mainSrc ? () => onViewImage(mainSrc) : undefined}
+          style={{
+            position: "relative",
+            height: 230,
+            borderRadius: "var(--r-card)",
+            overflow: "hidden",
+            border: "1px solid var(--line-3)",
+            background: "var(--fill-1)",
+            cursor: mainSrc ? "zoom-in" : "default",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {mainSrc && (
+            <img
+              src={mainSrc}
+              alt=""
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                opacity: active ? 0.4 : 1,
+              }}
+            />
+          )}
+          {active && (
+            <svg
+              className="assets-spin"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ color: "var(--indigo-500)", position: "relative" }}
+            >
+              <path
+                d="M21 12a9 9 0 1 1-6.219-8.56"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
+        </div>
+
+        {/* Small "from this source" reference, only when the main preview is the
+            output (i.e. succeeded). */}
+        {succeeded && sourceSrc && (
+          <div
+            style={{
+              marginTop: 10,
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+            }}
+          >
+            <div
+              onClick={() => onViewImage(sourceSrc)}
+              style={{
+                width: 40,
+                height: 40,
+                flexShrink: 0,
+                borderRadius: "var(--r-badge-sm)",
+                overflow: "hidden",
+                border: "1px solid var(--line-3)",
+                background: "var(--fill-1)",
+                cursor: "zoom-in",
+              }}
+            >
+              <img
+                src={sourceSrc}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            </div>
+            <span style={{ fontSize: 11.5, color: "var(--ink-500)" }}>
+              Dari sumber:{" "}
+              <span style={{ color: "var(--ink-700)", fontWeight: 500 }}>
+                {sourceImg ? sourceImg.title ?? sourceImg.filename : "—"}
+              </span>
+            </span>
+          </div>
+        )}
+
+        {/* Status block */}
+        <div style={{ marginTop: 16 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: ".01em",
+                padding: "3px 10px",
+                borderRadius: 9999,
+                color: badge.color,
+                background: badge.bg,
+              }}
+            >
+              {badge.label}
+            </span>
+            <span
+              style={{
+                fontSize: 11.5,
+                color: "var(--ink-400)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {gen.provider} · {fmtWhen(gen.created_at)}
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ink-600)",
+              lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {gen.prompt}
+          </div>
+        </div>
+
+        {/* Failed → error box; otherwise the live provider log (when present). */}
+        {gen.status === "failed" ? (
+          <div style={{ marginTop: 16 }}>
+            <SectionLabel>Kesalahan</SectionLabel>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                lineHeight: 1.5,
+                color: "#b91c1c",
+                background: "#fee2e2",
+                border: "1px solid #fecaca",
+                borderRadius: "var(--r-card)",
+                padding: "10px 12px",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {gen.error ?? "Gagal"}
+            </div>
+          </div>
+        ) : (
+          logs && (
+            <div style={{ marginTop: 16 }}>
+              <SectionLabel>Log</SectionLabel>
+              <pre
+                ref={logRef}
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  color: "var(--ink-600)",
+                  background: "var(--fill-1)",
+                  border: "1px solid var(--line-3)",
+                  borderRadius: "var(--r-card)",
+                  padding: "10px 12px",
+                  margin: 0,
+                  maxHeight: 200,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {logs}
+              </pre>
+            </div>
+          )
+        )}
+
+        {/* Footer actions */}
+        {(succeeded || gen.status === "failed") && (
+          <div style={{ marginTop: 18 }}>
+            {succeeded ? (
+              <Button
+                variant="primary"
+                onClick={() => onOpenImage(gen.output_path!)}
+              >
+                Buka gambar
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => onRetry(gen.id)}
+              >
+                Ulangi
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Generations() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -93,6 +420,12 @@ export default function Generations() {
 
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
+  // The generation whose detail panel is open, by id. Resolved against the full
+  // list (not the filtered `visible`) so status transitions keep flowing into
+  // the panel even if the current filter would hide the row.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Fullscreen lightbox source for the panel's preview, or null when closed.
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
 
   const imgById = new Map<string, ImageEntry>();
   for (const img of images) imgById.set(img.id, img);
@@ -111,6 +444,17 @@ export default function Generations() {
     filter === "all"
       ? generations
       : generations.filter((g) => g.status === filter);
+
+  // The open generation, resolved live from the full list. If its id is gone
+  // (cleared queue / deleted), auto-close the panel.
+  const selectedGen = selectedId
+    ? generations.find((g) => g.id === selectedId) ?? null
+    : null;
+  useEffect(() => {
+    if (selectedId && !selectedGen) setSelectedId(null);
+  }, [selectedId, selectedGen]);
+
+  const panelOpen = !!selectedGen;
 
   const refresh = () =>
     qc.invalidateQueries({ queryKey: generationsQuery.queryKey });
@@ -158,10 +502,25 @@ export default function Generations() {
     return src ? convertFileSrc(src.path) : null;
   }
 
-  function openOutput(g: Generation) {
-    if (g.status !== "succeeded" || !g.output_path) return;
-    // Hand the target path to the assets page, which selects it on mount.
-    navigate("/", { state: { selectPath: g.output_path } });
+  /** Panel action: jump to the assets library and select this output image
+   *  (the behavior row-clicks used to trigger directly). */
+  function onOpenImage(path: string) {
+    navigate("/", { state: { selectPath: path } });
+  }
+
+  /** Panel action: retry a failed generation and *follow* the fresh job —
+   *  `requeueGeneration` returns the new `queued` row, so select it and watch
+   *  it run. The failed row is left in place. */
+  async function onRetryFollow(id: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const created = await requeueGeneration(id);
+      await refresh();
+      setSelectedId(created.id);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -225,8 +584,15 @@ export default function Generations() {
         )}
       </div>
 
-      <div style={{ flex: 1, overflow: "auto" }}>
-        {visible.length === 0 ? (
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <div
+          style={{
+            flex: panelOpen ? "0 0 520px" : 1,
+            overflow: "auto",
+            minWidth: 0,
+          }}
+        >
+          {visible.length === 0 ? (
           <div
             style={{
               height: "100%",
@@ -272,7 +638,7 @@ export default function Generations() {
               const badge = statusStyle(g.status);
               const thumb = thumbFor(g);
               const active = g.status === "queued" || g.status === "pending";
-              const clickable = g.status === "succeeded" && !!g.output_path;
+              const isSelected = g.id === selectedId;
               const name = sourceName(g);
               const kind = fileKind(name);
               const chip = kindChipStyle(kind);
@@ -280,7 +646,7 @@ export default function Generations() {
                 <div
                   key={g.id}
                   className="gen-row"
-                  onClick={clickable ? () => openOutput(g) : undefined}
+                  onClick={() => setSelectedId(g.id)}
                   style={{
                     display: "grid",
                     gridTemplateColumns: GRID_COLS,
@@ -288,7 +654,11 @@ export default function Generations() {
                     gap: 16,
                     padding: "10px 14px",
                     borderBottom: "1px solid var(--line-1)",
-                    cursor: clickable ? "pointer" : "default",
+                    cursor: "pointer",
+                    background: isSelected ? "var(--indigo-100)" : undefined,
+                    boxShadow: isSelected
+                      ? "inset 2px 0 0 var(--indigo-500)"
+                      : undefined,
                   }}
                 >
                   {/* Waktu */}
@@ -478,8 +848,29 @@ export default function Generations() {
               );
             })}
           </div>
+          )}
+        </div>
+
+        {selectedGen && (
+          <GenerationDetail
+            gen={selectedGen}
+            sourceImg={
+              selectedGen.source_id
+                ? imgById.get(selectedGen.source_id)
+                : undefined
+            }
+            busy={busy}
+            onClose={() => setSelectedId(null)}
+            onOpenImage={onOpenImage}
+            onViewImage={setViewerSrc}
+            onRetry={onRetryFollow}
+          />
         )}
       </div>
+
+      {viewerSrc && (
+        <ImageViewer src={viewerSrc} onClose={() => setViewerSrc(null)} />
+      )}
     </>
   );
 }

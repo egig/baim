@@ -171,13 +171,31 @@ pub async fn refresh_generation(db: &Db, id: &str) -> Result<Generation, String>
         .ok_or("This generation has no poll URL to refresh")?;
 
     match provider.poll(&poll_url, &api_key).await? {
-        PollOutcome::Pending => {}
-        PollOutcome::Done { image_bytes, ext } => {
+        PollOutcome::Pending { logs } => {
+            // Still running: persist the latest logs so the detail panel updates
+            // live. Only write when they actually changed to avoid a needless
+            // upsert on every 2s poll tick.
+            if logs.is_some() && logs != record.logs {
+                record.logs = logs;
+                let _ = db.upsert_generation(&record);
+            }
+        }
+        PollOutcome::Done {
+            image_bytes,
+            ext,
+            logs,
+        } => {
+            if logs.is_some() {
+                record.logs = logs;
+            }
             save_generated_image(db, &mut record, &image_bytes, &ext)?;
         }
-        PollOutcome::Failed { error } => {
+        PollOutcome::Failed { error, logs } => {
             record.status = "failed".to_string();
             record.error = Some(error);
+            if logs.is_some() {
+                record.logs = logs;
+            }
             let _ = db.upsert_generation(&record);
         }
     }
@@ -397,6 +415,12 @@ pub struct Generation {
     /// before source tracking existed.
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The provider's latest log blob for this generation, refreshed on every
+    /// poll (Replicate streams a growing text log; Google's Batch API has none,
+    /// so it stays `None`). Surfaced in the generation detail panel. `None` for
+    /// legacy rows and queued jobs that haven't been submitted yet.
+    #[serde(default)]
+    pub logs: Option<String>,
     pub created_at: i64,
 }
 
@@ -426,6 +450,7 @@ fn new_generation(
         output_path,
         error,
         source_id: source_id.map(|s| s.to_string()),
+        logs: None,
         created_at,
     }
 }

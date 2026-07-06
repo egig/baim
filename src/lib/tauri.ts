@@ -81,6 +81,9 @@ export interface Generation {
   error: string | null;
   /** The id of the image this was generated from, or null for legacy rows. */
   source_id: string | null;
+  /** The provider's latest log blob, refreshed on every poll. Replicate streams
+   *  real logs; Google's Batch API has none (null). Null for legacy/queued rows. */
+  logs: string | null;
   created_at: number;
 }
 

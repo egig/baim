@@ -17,6 +17,10 @@ struct Prediction {
     output: Option<serde_json::Value>,
     error: Option<String>,
     urls: Option<PredictionUrls>,
+    /// Replicate streams a growing, human-readable log blob here while the
+    /// prediction runs. Surfaced to the generation detail panel.
+    #[serde(default)]
+    logs: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,14 +151,18 @@ impl ImageProvider for ReplicateProvider {
                 Ok(PollOutcome::Done {
                     image_bytes,
                     ext: OUTPUT_FORMAT.to_string(),
+                    logs: prediction.logs,
                 })
             }
             "failed" | "canceled" => Ok(PollOutcome::Failed {
                 error: prediction
                     .error
                     .unwrap_or_else(|| prediction.status.clone()),
+                logs: prediction.logs,
             }),
-            _ => Ok(PollOutcome::Pending),
+            _ => Ok(PollOutcome::Pending {
+                logs: prediction.logs,
+            }),
         }
     }
 }
