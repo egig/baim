@@ -1,7 +1,45 @@
-import { Link, Outlet, useLocation } from "react-router";
-import { memo, useEffect, type ReactNode } from "react";
+import { Outlet } from "react-router";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { generationsQuery, isActive } from "./lib/queries";
+import Settings from "./routes/settings";
+import Generations from "./routes/generations";
+
+/* ---------- escape layering ---------- */
+
+/** Stack of dismissable layers (dialogs, panels, lightboxes). A single window
+ *  listener closes only the topmost layer per Escape press, so nested overlays
+ *  unwind one at a time instead of all at once. */
+const escapeLayers: (() => void)[] = [];
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && escapeLayers.length > 0) {
+    escapeLayers[escapeLayers.length - 1]();
+  }
+});
+
+/** Register the calling component as the current topmost Escape target for as
+ *  long as it stays mounted. */
+export function useEscapeLayer(onClose: () => void) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const layer = () => closeRef.current();
+    escapeLayers.push(layer);
+    return () => {
+      const i = escapeLayers.indexOf(layer);
+      if (i !== -1) escapeLayers.splice(i, 1);
+    };
+  }, []);
+}
 
 /* ---------- shared primitives ---------- */
 
@@ -18,13 +56,7 @@ export const ImageViewer = memo(function ImageViewer({
   alt?: string;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscapeLayer(onClose);
 
   return (
     <div
@@ -139,52 +171,67 @@ export function Button({
   );
 }
 
-function NavItem({
-  to,
-  label,
-  icon,
-  count,
+/** Centered modal over a scrim. Closes on Escape (topmost-layer only) and
+ *  backdrop click; clicks inside the panel are swallowed. Sits below the
+ *  ImageViewer (z 1000) so a lightbox opened from a dialog covers it. */
+export function Dialog({
+  width,
+  height,
+  onClose,
+  children,
 }: {
-  to: string;
-  label: string;
-  icon: ReactNode;
-  count?: number;
+  width: number | string;
+  height?: number | string;
+  onClose: () => void;
+  children: ReactNode;
 }) {
-  const location = useLocation();
-  const active = location.pathname === to;
+  useEscapeLayer(onClose);
   return (
-    <Link
-      to={to}
+    <div
+      onClick={onClose}
       style={{
-        height: 30,
-        padding: "0 8px",
+        position: "fixed",
+        inset: 0,
+        zIndex: 900,
+        background: "rgba(15,18,26,0.45)",
         display: "flex",
         alignItems: "center",
-        gap: 9,
-        borderRadius: 6,
-        cursor: "pointer",
-        textDecoration: "none",
-        background: active ? "var(--fill-1)" : "transparent",
-        color: active ? "var(--ink-900)" : "var(--ink-700)",
-        fontSize: 12.5,
-        fontWeight: active ? 600 : 500,
+        justifyContent: "center",
       }}
     >
-      <span style={{ display: "flex", opacity: 0.85 }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
-      {count != null && (
-        <span
-          style={{
-            fontSize: 11,
-            color: "var(--ink-400)",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {count}
-        </span>
-      )}
-    </Link>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width,
+          height,
+          maxWidth: "94vw",
+          maxHeight: "88vh",
+          background: "var(--surface-1)",
+          border: "1px solid var(--line-3)",
+          borderRadius: "var(--r-window)",
+          boxShadow: "0 24px 64px rgba(0,0,0,.28)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {children}
+      </div>
+    </div>
   );
+}
+
+/* ---------- shell context ---------- */
+
+const ShellContext = createContext<{
+  openSettings: () => void;
+  openQueue: () => void;
+}>({ openSettings: () => {}, openQueue: () => {} });
+
+/** Shell actions (open the settings / queue dialogs) for pages rendered in the
+ *  outlet, e.g. the assets page's missing-API-key banner. */
+export function useShell() {
+  return useContext(ShellContext);
 }
 
 function strokePath(d: string) {
@@ -200,21 +247,83 @@ function strokePath(d: string) {
   );
 }
 
-const iconLibrary = (
-  <svg width="15" height="15" viewBox="0 0 15 15" style={{ color: "var(--ink-700)" }}>
-    {strokePath("M2 2.4h4.5v4.5H2zM8.5 2.4H13v4.5H8.5zM2 8.9h4.5v3.7H2zM8.5 8.9H13v3.7H8.5z")}
+const iconQueue = (
+  <svg width="15" height="15" viewBox="0 0 15 15">
+    {strokePath("M2.5 3.5h10M2.5 7.5h10M2.5 11.5h10")}
   </svg>
 );
 
-const iconQueue = (
-  <svg width="15" height="15" viewBox="0 0 15 15" style={{ color: "var(--ink-700)" }}>
-    {strokePath("M2.5 3.5h10M2.5 7.5h10M2.5 11.5h10")}
+const iconSettings = (
+  <svg width="15" height="15" viewBox="0 0 15 15">
+    {strokePath("M2.5 5h4.6M10.7 5h1.8")}
+    {strokePath("M2.5 10h1.8M7.7 10h4.8")}
+    <circle
+      cx="9"
+      cy="5"
+      r="1.7"
+      stroke="currentColor"
+      strokeWidth={1.2}
+      fill="none"
+    />
+    <circle
+      cx="6"
+      cy="10"
+      r="1.7"
+      stroke="currentColor"
+      strokeWidth={1.2}
+      fill="none"
+    />
   </svg>
 );
 
 /* ---------- titlebar ---------- */
 
-function Titlebar() {
+/** Icon button in the titlebar. Children (the SVG) sit inside a fixed 24px
+ *  square; clicks on it don't start a window drag because Tauri only drags
+ *  from elements carrying data-tauri-drag-region themselves. */
+function TitlebarButton({
+  title,
+  onClick,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      style={{
+        position: "relative",
+        width: 26,
+        height: 24,
+        padding: 0,
+        border: "none",
+        borderRadius: 6,
+        background: "transparent",
+        color: "var(--ink-500)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Titlebar({
+  activeCount,
+  onOpenQueue,
+  onOpenSettings,
+}: {
+  activeCount: number;
+  onOpenQueue: () => void;
+  onOpenSettings: () => void;
+}) {
   return (
     <div
       data-tauri-drag-region
@@ -223,8 +332,42 @@ function Titlebar() {
         flexShrink: 0,
         background: "var(--surface-2)",
         borderBottom: "1px solid var(--line-1)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 2,
+        padding: "0 10px",
       }}
-    />
+    >
+      <TitlebarButton title="Antrean" onClick={onOpenQueue}>
+        {iconQueue}
+        {activeCount > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: 0,
+              right: -2,
+              minWidth: 13,
+              height: 13,
+              padding: "0 3px",
+              borderRadius: 9999,
+              background: "var(--indigo-500)",
+              color: "#fff",
+              fontSize: 9,
+              fontWeight: 700,
+              lineHeight: "13px",
+              textAlign: "center",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {activeCount}
+          </span>
+        )}
+      </TitlebarButton>
+      <TitlebarButton title="Pengaturan" onClick={onOpenSettings}>
+        {iconSettings}
+      </TitlebarButton>
+    </div>
   );
 }
 
@@ -232,110 +375,64 @@ function Titlebar() {
 
 export default function Root() {
   // Observing the queue engine from the always-mounted shell keeps it polling
-  // and draining on every route; the count drives the sidebar badge.
+  // and draining regardless of dialog state; the count drives the titlebar badge.
   const { data: activeCount = 0 } = useQuery({
     ...generationsQuery,
     select: (gens) => gens.filter(isActive).length,
   });
 
+  const [openDialog, setOpenDialog] = useState<"settings" | "queue" | null>(
+    null
+  );
+  const closeDialog = () => setOpenDialog(null);
+
+  const shell = useMemo(
+    () => ({
+      openSettings: () => setOpenDialog("settings"),
+      openQueue: () => setOpenDialog("queue"),
+    }),
+    []
+  );
+
   return (
-    <div
-      className="assets-app"
-      style={{
-        height: "100vh",
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <Titlebar />
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        {/* Sidebar */}
-        <div
-          style={{
-            width: 240,
-            flexShrink: 0,
-            background: "var(--surface-2)",
-            borderRight: "1px solid var(--line-1)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-
-          {/* Nav */}
-          <div style={{ padding: "2px 10px", display: "flex", flexDirection: "column", gap: 1 }}>
-            <NavItem to="/" label="Daftar Gambar" icon={iconLibrary} />
-            <NavItem
-              to="/generations"
-              label="Antrean"
-              icon={iconQueue}
-              count={activeCount > 0 ? activeCount : undefined}
-            />
-          </div>
-
-              
-
-          <div style={{ flex: 1 }} />
-
-          {/* API Key link */}
-          <div
-            style={{
-              padding: "12px 14px",
-              borderTop: "1px solid var(--line-1)",
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-            }}
-          >
-            <Link
-              to="/settings"
-              style={{
-                textDecoration: "none",
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-                flex: 1,
-              }}
-            >
-              <div
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 7,
-                  background: "var(--indigo-100)",
-                  color: "var(--indigo-500)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 15 15">
-                  {strokePath("M6.5 9.5A3 3 0 1 0 3 5.5a3 3 0 0 0 3.5 4v3.5h2v-2h2v-1.5h.5")}
-                  {strokePath("M9 7.5h.01")}
-                </svg>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-800)" }}>Pengaturan</div>
-                <div style={{ fontSize: 11, color: "var(--ink-500)" }}>API key &amp; penyimpanan</div>
-              </div>
-            </Link>
-          </div>
-        </div>
-
-        {/* Main content */}
+    <ShellContext.Provider value={shell}>
+      <div
+        className="assets-app"
+        style={{
+          height: "100vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <Titlebar
+          activeCount={activeCount}
+          onOpenQueue={shell.openQueue}
+          onOpenSettings={shell.openSettings}
+        />
         <div
           style={{
             flex: 1,
             display: "flex",
             flexDirection: "column",
             minWidth: 0,
+            minHeight: 0,
           }}
         >
           <Outlet />
         </div>
+
+        {openDialog === "settings" && (
+          <Dialog width={540} onClose={closeDialog}>
+            <Settings onClose={closeDialog} />
+          </Dialog>
+        )}
+        {openDialog === "queue" && (
+          <Dialog width="min(1000px, 90vw)" height="80vh" onClose={closeDialog}>
+            <Generations onClose={closeDialog} />
+          </Dialog>
+        )}
       </div>
-    </div>
+    </ShellContext.Provider>
   );
 }

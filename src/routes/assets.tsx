@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Link, useLocation } from "react-router";
+import { useLocation } from "react-router";
 import {
   useQuery,
   useQueryClient,
@@ -35,7 +35,7 @@ import {
   deriveGenerations,
 } from "../lib/queries";
 import { GENERATION_TEMPLATES } from "../lib/templates";
-import { Button, ImageViewer } from "../root";
+import { Button, ImageViewer, useShell } from "../root";
 
 // ---------- helpers ----------
 
@@ -694,6 +694,7 @@ export const loader = (qc: QueryClient) => async () => {
 export default function Assets() {
   const fileRef = useRef<HTMLInputElement>(null);
   const location = useLocation();
+  const { openSettings } = useShell();
 
   const qc = useQueryClient();
   const { data: images = [] } = useQuery(imagesQuery);
@@ -1323,12 +1324,17 @@ export default function Assets() {
           >
             Kunci API {providerLabel} belum diatur — pembuatan varian butuh
             kunci.{" "}
-            <Link
-              to="/settings"
-              style={{ color: "var(--indigo-600)", fontWeight: 600 }}
+            <span
+              onClick={openSettings}
+              style={{
+                color: "var(--indigo-600)",
+                fontWeight: 600,
+                cursor: "pointer",
+                textDecoration: "underline",
+              }}
             >
               Atur sekarang
-            </Link>
+            </span>
             .
           </div>
         )}

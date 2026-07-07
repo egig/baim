@@ -12,12 +12,22 @@ import {
 } from "../lib/tauri";
 
 const styles = {
-  page: {
-    maxWidth: 480,
-    margin: "40px auto",
+  header: {
+    height: 52,
+    flexShrink: 0,
+    padding: "0 20px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottom: "1px solid var(--line-1)",
+  },
+  body: {
+    flex: 1,
+    overflow: "auto",
+    padding: 20,
     display: "flex",
     flexDirection: "column" as const,
-    gap: 20,
+    gap: 16,
   },
   card: {
     padding: "24px 28px",
@@ -29,10 +39,20 @@ const styles = {
     gap: 18,
   },
   title: {
-    fontSize: 18,
-    fontWeight: 700,
-    color: "var(--ink-900)",
-    margin: "0 0 2px",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "var(--ink-800)",
+    margin: 0,
+  },
+  closeBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    color: "var(--ink-400)",
   },
   heading: {
     fontSize: 16,
@@ -374,7 +394,7 @@ function StorageSection() {
   );
 }
 
-export default function Settings() {
+export default function Settings({ onClose }: { onClose: () => void }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [active, setActive] = useState<string>("");
 
@@ -395,15 +415,29 @@ export default function Settings() {
   const activeProvider = providers.find((p) => p.id === active);
 
   return (
-    <div style={styles.page}>
-      <h1 style={styles.title}>Settings</h1>
-      <ProviderSection
-        providers={providers}
-        active={active}
-        activeProvider={activeProvider}
-        onChange={handleProviderChange}
-      />
-      <StorageSection />
-    </div>
+    <>
+      <div style={styles.header}>
+        <h1 style={styles.title}>Pengaturan</h1>
+        <div onClick={onClose} style={styles.closeBtn}>
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path
+              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+              stroke="currentColor"
+              strokeWidth={1.4}
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div style={styles.body}>
+        <ProviderSection
+          providers={providers}
+          active={active}
+          activeProvider={activeProvider}
+          onChange={handleProviderChange}
+        />
+        <StorageSection />
+      </div>
+    </>
   );
 }

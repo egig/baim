@@ -9,7 +9,7 @@ import {
   type ImageEntry,
 } from "../lib/tauri";
 import { generationsQuery, imagesQuery } from "../lib/queries";
-import { Button, ImageViewer } from "../root";
+import { Button, ImageViewer, useEscapeLayer } from "../root";
 import { Segmented } from "./assets";
 
 /** Which generation states the list is filtered to. */
@@ -125,14 +125,9 @@ function GenerationDetail({
   onViewImage: (src: string) => void;
   onRetry: (id: string) => void;
 }) {
-  // Escape closes the panel, matching the lightbox and the assets detail panel.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape closes the panel — layered, so it wins over the enclosing dialog
+  // and loses to a lightbox opened on top of it.
+  useEscapeLayer(onClose);
 
   const active = gen.status === "queued" || gen.status === "pending";
   const succeeded = gen.status === "succeeded" && !!gen.output_path;
@@ -412,7 +407,7 @@ function GenerationDetail({
   );
 }
 
-export default function Generations() {
+export default function Generations({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data: generations = [] } = useQuery(generationsQuery);
@@ -502,9 +497,11 @@ export default function Generations() {
     return src ? convertFileSrc(src.path) : null;
   }
 
-  /** Panel action: jump to the assets library and select this output image
-   *  (the behavior row-clicks used to trigger directly). */
+  /** Panel action: close the dialog and select this output image in the
+   *  always-mounted assets library underneath (via router state, consumed by
+   *  the selectPath effect in assets.tsx). */
   function onOpenImage(path: string) {
+    onClose();
     navigate("/", { state: { selectPath: path } });
   }
 
@@ -582,6 +579,29 @@ export default function Generations() {
             Kosongkan antrean
           </Button>
         )}
+
+        <div
+          onClick={onClose}
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            color: "var(--ink-400)",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path
+              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
+              stroke="currentColor"
+              strokeWidth={1.4}
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
