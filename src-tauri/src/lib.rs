@@ -48,6 +48,11 @@ pub fn run() {
                 .allow_directory(&storage_dir, true)
                 .expect("Failed to allow storage directory");
 
+            // Initialize cloud provider config from DB settings.
+            if let Some(endpoint) = db.read_setting("cloud_endpoint") {
+                providers::cloud::set_cloud_endpoint(endpoint);
+            }
+
             app.manage(db);
 
             Ok(())
@@ -68,6 +73,8 @@ pub fn run() {
             commands::get_generations,
             commands::delete_image,
             commands::save_uploaded_image,
+            commands::get_cloud_endpoint,
+            commands::set_cloud_endpoint,
             commands::get_storage_dir,
             commands::set_storage_dir,
         ])

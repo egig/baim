@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { generationsQuery, isActive } from "./lib/queries";
 import Settings from "./routes/settings";
 import Generations from "./routes/generations";
-import { IconX, IconStack2, IconSettings } from "./lib/icons";
+import { IconX, IconAlignBoxLeftStretch, IconSettings } from "./lib/icons";
 
 /* ---------- escape layering ---------- */
 
@@ -228,7 +228,7 @@ export function useShell() {
   return useContext(ShellContext);
 }
 
-const iconQueue = <IconStack2 size={15} />;
+const iconQueue = <IconAlignBoxLeftStretch size={15} />;
 const iconSettings = <IconSettings size={15} />;
 
 /* ---------- titlebar ---------- */

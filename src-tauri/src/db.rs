@@ -227,6 +227,31 @@ impl Db {
         stored.filter(|s| !s.is_empty())
     }
 
+    /// Read a raw setting value from the settings table.
+    pub fn read_setting(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .ok();
+        stored.filter(|s| !s.is_empty())
+    }
+
+    /// Persist a raw setting to the settings table.
+    pub fn write_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .map_err(|e| format!("Failed to write setting: {}", e))?;
+        Ok(())
+    }
+
     /// Persist a provider's API key. An empty/whitespace-only key clears it.
     pub fn set_api_key(&self, provider_id: &str, key: &str) -> Result<(), String> {
         let key = key.trim();

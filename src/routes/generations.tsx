@@ -10,7 +10,7 @@ import {
 } from "../lib/tauri";
 import { generationsQuery, imagesQuery } from "../lib/queries";
 import { Button, ImageViewer, useEscapeLayer } from "../root";
-import { Segmented } from "./assets";
+import { Segmented } from "../components/Segmented";
 import { IconX, IconLoader2 } from "../lib/icons";
 
 /** Which generation states the list is filtered to. */

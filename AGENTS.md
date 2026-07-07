@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-07 (Replicate provider removed — Google/Gemini is the
-sole registered provider; DB migration moves legacy `replicate` state to google)
+**Last updated**: 2026-07-07 (added `catalog-core` shared crate, Cloudflare Workers
+backend in `packages/cloud-backend/`, `CloudProvider` for desktop → cloud routing)
 
 > **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
 > Windows-specific issues (title bar config, `\\?\` canonical paths, default
@@ -16,7 +16,12 @@ sole registered provider; DB migration moves legacy `replicate` state to google)
 | `npm run lint` | oxlint |
 | `npx tauri dev` | Full desktop app (spawns Vite via `beforeDevCommand`) |
 | `npx tauri build` | Production bundle |
-| `cargo check` / `cargo build` (from `src-tauri/`) | Rust backend only |
+| `cargo check` / `cargo build` | Rust workspace (from repo root) |
+| `cargo check -p catalog-core` | Shared crate only |
+| `npm run dev` (from `packages/cloud-backend/`) | `wrangler dev` for Workers dev server |
+| `npm run typecheck` (from `packages/cloud-backend/`) | TypeScript typecheck for cloud backend |
+| `npm run migrate` (from `packages/cloud-backend/`) | Apply D1 migration |
+| `npm run deploy` (from `packages/cloud-backend/`) | Deploy Worker to Cloudflare |
 
 No test suite.
 
@@ -33,12 +38,22 @@ Tauri v2 app, two halves over `invoke()`.
 - TS quirks: `verbatimModuleSyntax` (use `import type`), `erasableSyntaxOnly`
   (no enums, no namespaces).
 - **Routes** (`src/main.tsx`):
-  - `/` → `routes/assets.tsx` — asset library (main page)
+  - `/` → `routes/assets/index.tsx` — asset library (main page); its
+    subcomponents live as siblings in `routes/assets/` (see below)
   - `/settings` → `routes/settings.tsx` — settings page (API key + storage
     location sections; folder picker via `@tauri-apps/plugin-dialog`)
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
 - `src/root.tsx` — layout shell with sidebar, exports `Button` component.
+- **One component per file.** A route file (`routes/*.tsx` or `routes/*/index.tsx`)
+  owns page-level state and composition only; every `memo`/exported component it
+  used to render inline gets its own file next to it (e.g. `routes/assets/ImageCard.tsx`,
+  `routes/assets/DetailPanel.tsx`). A component used by more than one route (e.g.
+  `Segmented`) belongs in `src/components/`, not in whichever route first needed
+  it. Small pure helpers (formatters, constants) go in a `helpers.ts`/`types.ts`
+  next to the route, not inline in a component file. When a route file's inline
+  JSX return grows past a couple hundred lines, that's the signal to extract —
+  don't wait for a rewrite to fix it.
 
 ### Backend (`src-tauri/src/`)
 
@@ -46,8 +61,9 @@ Tauri v2 app, two halves over `invoke()`.
 |---|---|
 | `lib.rs` | Tauri setup: opens DB, runs `seed_from_disk()`, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
-| `provider.rs` | `ImageProvider` trait, `GenerateRequest`/`CreateOutcome`/`PollOutcome`/`ProviderInfo`, and the provider registry (`all_providers`/`get_provider`) |
-| `providers/google.rs` | Concrete Google/Gemini impl (async Batch API, `gemini-3.1-flash-image`, `:batchGenerateContent` inline job + poll operation, retries transient 5xx on create) |
+| `provider.rs` | Re-exports `ImageProvider` trait + types from `catalog-core`; provider registry (`all_providers`/`get_provider`) |
+| `providers/google.rs` | Re-export of GoogleProvider from `catalog-core` |
+| `providers/cloud.rs` | `CloudProvider` — REST client to cloud backend (Cloudflare Workers) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
@@ -55,6 +71,7 @@ Commands: `create_prediction`, `create_predictions` (batch: one prediction per
 prompt), `refresh_generation`, `list_providers`,
 `get_active_provider`, `set_active_provider`, `has_api_key`, `set_api_key`,
 `get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
+`get_cloud_endpoint`, `set_cloud_endpoint`,
 `get_storage_dir`, `set_storage_dir`.
 
 ### Provider abstraction
@@ -62,29 +79,30 @@ prompt), `refresh_generation`, `list_providers`,
 Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
 `all_providers()`; the settings dropdown, per-provider API-key inputs, and
-per-generation dispatch are all driven off that registry. The sole registered
-provider is **Google/Gemini** (async, via the **Batch API**). Google submits a
-single-request inline batch job — `POST
-{v1beta}/models/gemini-3.1-flash-image:batchGenerateContent` with the prompt as a
-text part and the source image as an `inline_data` part, `response_modalities:
-[TEXT, IMAGE]` — and returns the operation name as the poll URL; `poll` GETs
-`{v1beta}/{operation}` (a long-running `Operation`), keys off its `done` flag
-plus the batch `state`, then reads the generated image out of the inline
-response. Batch trades latency (target turnaround up to 24h, usually much faster)
-for 50% cost and higher rate limits. The Batch REST response is loosely specced —
-state appears as `BATCH_STATE_*` (REST) or `JOB_STATE_*` (SDKs) and nests under
-`metadata`/`response` — so `google.rs` parses the operation as `serde_json::Value`
-and searches defensively (`find_state` by suffix, recursive `find_inline_image`
-and `find_error_message`) rather than relying on a fixed shape. Google is
-async-poll (`CreateOutcome::Pending { poll_url }`, advanced by `poll`); the
-trait *also* supports synchronous providers (`CreateOutcome::Done {
-image_bytes }`, saved immediately) for future backends, even though none is
-registered today. The active provider is a **global choice** stored in the DB
-`settings` table (`active_provider` key) and each `generations` row records the
-`provider` that produced it. A one-time migration in `db.rs::init_tables`
-handles databases from when **Replicate** was registered: `active_provider =
-'replicate'` is rewritten to `google`, and unfinished replicate generations are
-marked `failed` (finished rows keep `provider = 'replicate'` as history).
+per-generation dispatch are all driven off that registry. The trait and the
+**Google/Gemini** implementation live in the `catalog-core` shared crate, used
+by both the desktop app and (conceptually) the cloud backend.
+
+**Registered providers:**
+- **Google/Gemini** — async, via the **Batch API**. Submits a single-request
+  inline batch job (`POST {v1beta}/models/gemini-3.1-flash-image:batchGenerateContent`
+  with prompt + source image as `inline_data`, `response_modalities: [TEXT, IMAGE]`),
+  returns the operation name as the poll URL. Poll GETs `{v1beta}/{operation}`,
+  keys off `done` flag + batch `state`, extracts image from inline response.
+  Parses the operation as `serde_json::Value`, searches defensively for state
+  (matches `BATCH_STATE_*` or `JOB_STATE_*` by suffix), image (`find_inline_image`),
+  and errors. Retries transient 5xx on create with exponential backoff.
+- **Cloud** — REST client to the cloud backend (Cloudflare Workers). Forwards
+  jobs to `POST /api/jobs` and polls via `GET /api/jobs/:id`. The downstream
+  provider API key (e.g. Gemini) is passed alongside the cloud auth key in
+  `provider_api_key`.
+
+The active provider is a **global choice** stored in the DB `settings` table
+(`active_provider` key) and each `generations` row records the `provider` that
+produced it. A one-time migration in `db.rs::init_tables` handles databases
+from when **Replicate** was registered: `active_provider = 'replicate'` is
+rewritten to `google`, and unfinished replicate generations are marked `failed`
+(finished rows keep `provider = 'replicate'` as history).
 
 ### Key constraints
 
@@ -118,11 +136,12 @@ marked `failed` (finished rows keep `provider = 'replicate'` as history).
   `refetchInterval` that fires every 2s while any generation is `pending`, and its
   `fetchAssets` advances each pending row one step by calling `refresh_generation`
   (via `refreshGeneration(id)`). The interval stops once nothing is pending.
-  In-progress generations render as spinner placeholder tiles (`PendingCard` in
-  `assets.tsx`); the `generate()` flow is non-blocking (fire, close panel, free
-  the button) — the finished image appears when polling completes.
+  In-progress generations render as spinner placeholder tiles
+  (`routes/assets/PendingCard.tsx`); the `generate()` flow is non-blocking (fire,
+  close panel, free the button) — the finished image appears when polling
+  completes.
 - **Upload normalization** — uploaded images are converted to PNG data URIs
-  client-side (canvas re-encode) via `fileToDataUri()` in `assets.tsx`.
+  client-side (canvas re-encode) via `fileToDataUri()` in `routes/assets/helpers.ts`.
   Images are **saved to the DB and filesystem immediately on pick**
   (not deferred until generation), via `save_uploaded_image`.
 - **Path safety** — `delete_image` canonicalizes paths and rejects anything
@@ -130,3 +149,29 @@ marked `failed` (finished rows keep `provider = 'replicate'` as history).
 - **Rust deps**: `reqwest` (HTTP), `rusqlite` (SQLite), `serde`/`serde_json`,
   `uuid`, `dirs`, `tokio`, `base64`, `async-trait` (provider trait),
   `tauri-plugin-dialog` (folder picker).
+
+### Shared crate (`catalog-core/`)
+
+Cargo workspace member. Contains the `ImageProvider` trait + types and the
+`GoogleProvider` implementation. Used by the desktop app (`src-tauri/`) and
+available for the cloud backend (if ever needed in Rust).
+
+### Cloud backend (`packages/cloud-backend/`)
+
+Cloudflare Workers + D1 + R2. TypeScript with Hono router. DDD structure:
+
+| Layer | Path | Contents |
+|---|---|---|
+| Domain | `src/domain/` | `Job`, `User` entities, repository interfaces (`ports.ts`) |
+| Application | `src/application/` | `JobService` (create/poll/retry), `AuthService` (register/authenticate) |
+| Infrastructure | `src/infrastructure/d1/` | D1 implementations of repositories |
+| | `src/infrastructure/r2/` | R2 image store |
+| | `src/infrastructure/providers/` | Gemini client + provider registry |
+| Workers | `src/workers/api.ts` | Hono REST API (jobs CRUD, auth, images, models) |
+| | `src/workers/cron.ts` | Scheduled (30s) — poll pending jobs |
+| | `src/workers/queue.ts` | Queue consumer — submit queued jobs |
+
+**API endpoints:** `POST /api/auth/register`, `POST /api/jobs`, `GET /api/jobs/:id`,
+`GET /api/jobs`, `POST /api/jobs/:id/retry`, `GET /api/images/:key`, `GET /api/models`.
+
+Deploy with `npm run deploy` (from `packages/cloud-backend/`). Requires `wrangler`.

@@ -95,6 +95,13 @@ async fn do_submit(db: &Db, record: &mut Generation) -> Result<(), String> {
         .read_api_key(&record.provider)
         .ok_or_else(|| format!("No API key set for {}", record.provider))?;
 
+    // Meta-providers (cloud) need the downstream provider's API key too.
+    let provider_api_key = if record.provider == "cloud" {
+        db.read_api_key("google")
+    } else {
+        None
+    };
+
     let source_id = record
         .source_id
         .as_deref()
@@ -109,6 +116,7 @@ async fn do_submit(db: &Db, record: &mut Generation) -> Result<(), String> {
             prompt: record.prompt.clone(),
             image_data_uri: data_uri,
             api_key,
+            provider_api_key,
         })
         .await?;
 

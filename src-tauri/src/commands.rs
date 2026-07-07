@@ -127,6 +127,27 @@ pub async fn save_uploaded_image(
     generation::save_uploaded_image(&*state, &data_uri, title.as_deref())
 }
 
+/// The configured cloud backend endpoint URL.
+#[tauri::command]
+pub fn get_cloud_endpoint(state: tauri::State<'_, Db>) -> Option<String> {
+    state.read_setting("cloud_endpoint")
+}
+
+/// Persist the cloud backend endpoint URL and update the CloudProvider config.
+#[tauri::command]
+pub fn set_cloud_endpoint(
+    state: tauri::State<'_, Db>,
+    endpoint: String,
+) -> Result<(), String> {
+    let endpoint = endpoint.trim().to_string();
+    if endpoint.is_empty() {
+        return Ok(());
+    }
+    state.write_setting("cloud_endpoint", &endpoint)?;
+    crate::providers::cloud::set_cloud_endpoint(endpoint);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_storage_dir(state: tauri::State<'_, Db>) -> String {
     generation::get_storage_dir(&*state)
