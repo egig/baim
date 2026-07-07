@@ -3,6 +3,10 @@
 **Last updated**: 2026-07-05 (Google/Gemini provider now uses the async Batch API
 — `batchGenerateContent` inline job + poll; query-driven frontend polling)
 
+> **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
+> Windows-specific issues (title bar config, `\\?\` canonical paths, default
+> storage dir) with fixes and verification steps to perform on that machine.
+
 ## Commands
 
 | Command | What it does |
