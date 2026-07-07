@@ -8,12 +8,12 @@ pub struct GenerateRequest {
     pub api_key: String,
 }
 
-/// What a provider returns from `create`. Async providers (Replicate) hand back
-/// a poll URL and finish later; synchronous providers hand back image bytes
-/// directly, so the orchestrator can save them immediately.
+/// What a provider returns from `create`. Async providers (Google/Gemini) hand
+/// back a poll URL and finish later; synchronous providers hand back image
+/// bytes directly, so the orchestrator can save them immediately.
 pub enum CreateOutcome {
-    // Async providers (Replicate, Google/Gemini) return a poll URL, advanced
-    // later by `poll`.
+    // Async providers (Google/Gemini) return a poll URL, advanced later by
+    // `poll`.
     Pending { poll_url: String },
     // Synchronous providers return the image bytes directly, saved immediately.
     // No registered provider is synchronous today, but the orchestrator still
@@ -23,9 +23,9 @@ pub enum CreateOutcome {
 }
 
 /// The result of polling a pending generation once. Each variant carries the
-/// provider's `logs` when available (Replicate streams a growing text blob;
-/// Google's Batch API has none, so it returns `None`), so the orchestrator can
-/// persist the latest logs on every poll — including while still pending.
+/// provider's `logs` when available (Google's Batch API has none, so it
+/// returns `None`; a future provider may stream real logs), so the orchestrator
+/// can persist the latest logs on every poll — including while still pending.
 pub enum PollOutcome {
     Pending { logs: Option<String> },
     Done {
@@ -45,7 +45,7 @@ pub enum PollOutcome {
 pub struct ProviderInfo {
     pub id: String,
     pub label: String,
-    /// Placeholder shown in the API-key input (e.g. Replicate's `r8_...`).
+    /// Placeholder shown in the API-key input (e.g. Google's `AIza...`).
     pub key_hint: String,
     /// Where the user obtains a key for this provider.
     pub key_url: String,
@@ -62,16 +62,13 @@ pub trait ImageProvider: Send + Sync {
 }
 
 /// The identifier assumed when none is stored (existing rows, fresh installs).
-pub const DEFAULT_PROVIDER: &str = "replicate";
+pub const DEFAULT_PROVIDER: &str = "google";
 
 /// The provider registry. Adding a provider is a two-line change: implement
 /// `ImageProvider` and add it here — the settings dropdown, per-provider keys,
 /// and per-generation dispatch are all driven off this list.
 pub fn all_providers() -> Vec<Box<dyn ImageProvider>> {
-    vec![
-        Box::new(crate::providers::replicate::ReplicateProvider),
-        Box::new(crate::providers::google::GoogleProvider),
-    ]
+    vec![Box::new(crate::providers::google::GoogleProvider)]
 }
 
 /// Look up a provider by its id, if registered.

@@ -11,6 +11,7 @@ import {
 import { generationsQuery, imagesQuery } from "../lib/queries";
 import { Button, ImageViewer, useEscapeLayer } from "../root";
 import { Segmented } from "./assets";
+import { IconX, IconLoader2 } from "../lib/icons";
 
 /** Which generation states the list is filtered to. */
 type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
@@ -185,14 +186,7 @@ function GenerationDetail({
             color: "var(--ink-400)",
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <path
-              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-              stroke="currentColor"
-              strokeWidth={1.4}
-              strokeLinecap="round"
-            />
-          </svg>
+          <IconX size={12} />
         </div>
       </div>
 
@@ -229,21 +223,12 @@ function GenerationDetail({
             />
           )}
           {active && (
-            <svg
+            <IconLoader2
+              size={24}
               className="assets-spin"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
+              stroke={2.5}
               style={{ color: "var(--indigo-500)", position: "relative" }}
-            >
-              <path
-                d="M21 12a9 9 0 1 1-6.219-8.56"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-            </svg>
+            />
           )}
         </div>
 
@@ -593,14 +578,7 @@ export default function Generations({ onClose }: { onClose: () => void }) {
             color: "var(--ink-400)",
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <path
-              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-              stroke="currentColor"
-              strokeWidth={1.4}
-              strokeLinecap="round"
-            />
-          </svg>
+          <IconX size={12} />
         </div>
       </div>
 
@@ -739,21 +717,12 @@ export default function Generations({ onClose }: { onClose: () => void }) {
                             justifyContent: "center",
                           }}
                         >
-                          <svg
+                          <IconLoader2
+                            size={16}
                             className="assets-spin"
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
+                            stroke={2.5}
                             style={{ color: "var(--indigo-500)" }}
-                          >
-                            <path
-                              d="M21 12a9 9 0 1 1-6.219-8.56"
-                              stroke="currentColor"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            />
-                          </svg>
+                          />
                         </div>
                       )}
                     </div>

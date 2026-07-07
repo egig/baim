@@ -36,6 +36,17 @@ import {
 } from "../lib/queries";
 import { GENERATION_TEMPLATES } from "../lib/templates";
 import { Button, ImageViewer, useShell } from "../root";
+import {
+  IconX,
+  IconLoader2,
+  IconAlertTriangle,
+  IconSparkles,
+  IconUpload,
+  IconPhoto,
+  IconTrash,
+  IconLayoutGrid,
+  IconList,
+} from "../lib/icons";
 
 // ---------- helpers ----------
 
@@ -116,6 +127,10 @@ const SCROLL_PAD_X = 22;
 const SCROLL_PAD_TOP = 20;
 /** Rows rendered beyond the viewport, to avoid blank flashes while scrolling. */
 const OVERSCAN = 4;
+/** Detail panel width (px) at or above which its header switches to two
+ *  columns — image preview on the left, metadata on the right. Below this
+ *  (narrow windows / small screens) it stays a single stacked column. */
+const DETAIL_TWO_COL_MIN = 520;
 
 /** The content-box width of a scroll container (its `clientWidth` minus
  *  horizontal padding). Tracked live via a `ResizeObserver` for gradual changes
@@ -327,21 +342,12 @@ const PendingCard = memo(function PendingCard({
             justifyContent: "center",
           }}
         >
-          <svg
+          <IconLoader2
+            size={22}
             className="assets-spin"
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
+            stroke={2.5}
             style={{ color: "var(--indigo-500)" }}
-          >
-            <path
-              d="M21 12a9 9 0 1 1-6.219-8.56"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          </svg>
+          />
         </div>
       </div>
       <div
@@ -380,6 +386,7 @@ const VariantTile = memo(function VariantTile({
       title={gen.status === "failed" ? gen.error ?? "Gagal" : gen.prompt}
       style={{
         position: "relative",
+        width: 84,
         aspectRatio: "1",
         borderRadius: "var(--r-card)",
         overflow: "hidden",
@@ -421,21 +428,12 @@ const VariantTile = memo(function VariantTile({
               }}
             />
           )}
-          <svg
+          <IconLoader2
+            size={20}
             className="assets-spin"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
+            stroke={2.5}
             style={{ color: "var(--indigo-500)", position: "relative" }}
-          >
-            <path
-              d="M21 12a9 9 0 1 1-6.219-8.56"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          </svg>
+          />
         </>
       )}
       {gen.status === "failed" && (
@@ -449,21 +447,7 @@ const VariantTile = memo(function VariantTile({
             textAlign: "center",
           }}
         >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            style={{ color: "#dc2626" }}
-          >
-            <path
-              d="M12 3.5l9 16H3l9-16Z M12 10v4 M12 17.4v.1"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <IconAlertTriangle size={20} color="#dc2626" stroke={1.6} />
           <span
             style={{
               fontSize: 9.5,
@@ -649,21 +633,12 @@ const PendingRow = memo(function PendingRow({ srcPath }: { srcPath?: string }) {
             justifyContent: "center",
           }}
         >
-          <svg
+          <IconLoader2
+            size={18}
             className="assets-spin"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
+            stroke={2.5}
             style={{ color: "var(--indigo-500)" }}
-          >
-            <path
-              d="M21 12a9 9 0 1 1-6.219-8.56"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          </svg>
+          />
         </div>
       </div>
       <div
@@ -858,7 +833,7 @@ export default function Assets() {
     },
     staleTime: 30_000,
   });
-  const providerId = providerCtx?.id ?? "replicate";
+  const providerId = providerCtx?.id ?? "google";
   const providerLabel = providerCtx?.label ?? "AI";
 
   // Whether the active provider has a key saved in the backend. Drives the
@@ -1125,6 +1100,23 @@ export default function Assets() {
   const panelOpen = bulkOpen || (hasSelection && !!detail);
   const bulkJobCount = selectedPaths.size * selectedTemplates.size;
 
+  // Detail panel width, tracked via a callback ref: the panel mounts/unmounts
+  // with the selection, so an effect-attached ResizeObserver (as in
+  // `useContainerWidth`) would miss its element on first open. Drives the
+  // responsive two-column (image | metadata) header layout.
+  const [panelWidth, setPanelWidth] = useState(0);
+  const panelObserver = useRef<ResizeObserver | null>(null);
+  const panelRef = useCallback((el: HTMLDivElement | null) => {
+    panelObserver.current?.disconnect();
+    panelObserver.current = null;
+    if (!el) return;
+    const measure = () => setPanelWidth(el.clientWidth);
+    measure();
+    panelObserver.current = new ResizeObserver(measure);
+    panelObserver.current.observe(el);
+  }, []);
+  const detailTwoCol = panelWidth >= DETAIL_TWO_COL_MIN;
+
   // --- Virtualization: render only the visible rows of the grid/list. Both
   // views draw from one flat item list (pending placeholders first, then
   // images), so counts and scroll stay consistent across the grid↔list toggle.
@@ -1272,8 +1264,8 @@ export default function Assets() {
 
           <Segmented
             options={[
-              { value: "grid", label: <GridIcon />, title: "Tampilan petak" },
-              { value: "list", label: <ListIcon />, title: "Tampilan daftar" },
+              { value: "grid", label: <IconLayoutGrid size={14} />, title: "Tampilan petak" },
+              { value: "list", label: <IconList size={14} />, title: "Tampilan daftar" },
             ]}
             value={view}
             onChange={setView}
@@ -1291,23 +1283,7 @@ export default function Assets() {
           </Button>
 
           <Button variant="outline" onClick={onUploadClick}>
-            <svg width="14" height="14" viewBox="0 0 15 15">
-              <path
-                d="M7.5 9.6V2.4M4.6 5.1 7.5 2.2l2.9 2.9"
-                stroke="var(--ink-700)"
-                strokeWidth={1.3}
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M2.6 9.4v2.2a1 1 0 0 0 1 1h7.8a1 1 0 0 0 1-1V9.4"
-                stroke="var(--ink-700)"
-                strokeWidth={1.3}
-                fill="none"
-                strokeLinecap="round"
-              />
-            </svg>
+            <IconUpload size={14} color="var(--ink-700)" stroke={1.3} />
             Unggah gambar
           </Button>
         </div>
@@ -1540,8 +1516,8 @@ export default function Assets() {
 
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))",
+                    display: "flex",
+                    flexWrap: "wrap",
                     gap: 10,
                     marginBottom: 14,
                   }}
@@ -1552,7 +1528,7 @@ export default function Assets() {
                       <div
                         key={t.id}
                         onClick={() => toggleTemplate(t.id)}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: "pointer", width: 120 }}
                       >
                         <div
                           style={{
@@ -1580,17 +1556,7 @@ export default function Assets() {
                               }}
                             />
                           ) : (
-                            <svg
-                              width="24"
-                              height="24"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              style={{ color: "var(--ink-350)" }}
-                            >
-                              <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                              <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" />
-                              <path d="M4 17l5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
+                            <IconPhoto size={24} color="var(--ink-350)" stroke={1.5} />
                           )}
                           {isSelected && (
                             <div
@@ -1639,12 +1605,7 @@ export default function Assets() {
                   disabled={generating || bulkJobCount === 0}
                   onClick={generateBulk}
                 >
-                  <svg width="14" height="14" viewBox="0 0 15 15">
-                    <path
-                      d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
-                      fill="#fff"
-                    />
-                  </svg>
+                  <IconSparkles size={14} color="#fff" />
                   {generating ? "Mengantre…" : `Hasilkan ${bulkJobCount} varian`}
                 </Button>
 
@@ -1679,6 +1640,7 @@ export default function Assets() {
           {/* Detail panel */}
           {!selectMode && hasSelection && detail && (
             <div
+              ref={panelRef}
               style={{
                 flex: 1,
                 minWidth: 380,
@@ -1714,167 +1676,176 @@ export default function Assets() {
                     color: "var(--ink-400)",
                   }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 12 12">
-                    <path
-                      d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-                      stroke="currentColor"
-                      strokeWidth={1.4}
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <IconX size={12} />
                 </div>
               </div>
 
               <div style={{ padding: "16px 18px" }}>
-                <div
-                  onClick={() => setViewerSrc(detail.preview)}
-                  style={{
-                    position: "relative",
-                    height: 230,
-                    borderRadius: "var(--r-card)",
-                    overflow: "hidden",
-                    border: "1px solid var(--line-3)",
-                    background: "var(--fill-1)",
-                    cursor: "zoom-in",
-                  }}
-                >
-                  <img
-                    src={detail.preview}
-                    alt={detail.name}
-                    style={{
-                      position: "absolute",
-                      inset: 0,
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "contain",
-                    }}
-                  />
-                </div>
-
+                {/* Header: image preview + metadata. Two columns side by side
+                    when the panel is wide enough, stacked otherwise. */}
                 <div
                   style={{
-                    marginTop: 14,
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    color: "var(--ink-900)",
-                    wordBreak: "break-all",
+                    display: "flex",
+                    flexDirection: detailTwoCol ? "row" : "column",
+                    gap: detailTwoCol ? 16 : 0,
+                    alignItems: detailTwoCol ? "flex-start" : "stretch",
                   }}
                 >
-                  {detail.name}
-                </div>
-
-                <div
-                  style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 9 }}
-                >
-                  <DetailRow label="Jenis">
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        letterSpacing: ".02em",
-                        padding: "2px 5px",
-                        borderRadius: "var(--r-badge-sm)",
-                        color: "var(--indigo-600)",
-                        background: "var(--indigo-100)",
-                      }}
-                    >
-                      {detail.kind}
-                    </span>
-                  </DetailRow>
-                  <DetailRow label="Dimensi">
-                    <Mono>{detail.dims} px</Mono>
-                  </DetailRow>
-                  <DetailRow label="Ukuran">
-                    <Mono>{detail.sizeText}</Mono>
-                  </DetailRow>
-                  <DetailRow label="Ditambahkan">
-                    <Mono>{detail.added}</Mono>
-                  </DetailRow>
-                </div>
-
-                {(sourceImage || detail.prompt) && (
                   <div
+                    onClick={() => setViewerSrc(detail.preview)}
                     style={{
-                      marginTop: 14,
-                      display: "flex",
-                      flexDirection: "row",
-                      gap: 12,
-                      padding: 12,
-                      borderRadius: "var(--r-control)",
+                      position: "relative",
+                      flex: detailTwoCol ? "1 1 0" : undefined,
+                      minWidth: 0,
+                      maxWidth: detailTwoCol ? 420 : undefined,
+                      height: detailTwoCol ? "auto" : 230,
+                      aspectRatio: detailTwoCol ? "1" : undefined,
+                      borderRadius: "var(--r-card)",
+                      overflow: "hidden",
                       border: "1px solid var(--line-3)",
                       background: "var(--fill-1)",
+                      cursor: "zoom-in",
                     }}
                   >
-                    {sourceImage && (
-                      <div>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: "var(--ink-500)",
-                            marginBottom: 7,
-                          }}
-                        >
-                          Sumber
-                        </div>
-                        <div
-                          onClick={() => selectAsset(sourceImage.path)}
-                          title={sourceImage.filename}
-                          style={{
-                            position: "relative",
-                            width: 72,
-                            height: 72,
-                            borderRadius: "var(--r-card)",
-                            overflow: "hidden",
-                            border: "1px solid var(--line-3)",
-                            background: "var(--fill-2, var(--fill-1))",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <img
-                            src={convertFileSrc(sourceImage.path)}
-                            alt={sourceImage.filename}
-                            loading="lazy"
-                            style={{
-                              position: "absolute",
-                              inset: 0,
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    <img
+                      src={detail.preview}
+                      alt={detail.name}
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                      }}
+                    />
+                  </div>
 
-                    {detail.prompt && (
-                      <div>
-                        <div
+                  <div style={{ flex: detailTwoCol ? "1 1 0" : undefined, minWidth: 0 }}>
+                    <div
+                      style={{
+                        marginTop: detailTwoCol ? 0 : 14,
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: "var(--ink-900)",
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {detail.name}
+                    </div>
+
+                    <div
+                      style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 9 }}
+                    >
+                      <DetailRow label="Jenis">
+                        <span
                           style={{
-                            fontSize: 11.5,
-                            color: "var(--ink-500)",
-                            marginBottom: 5,
-                            padding: "0 10px",
-                          }}
-                        >
-                          Prompt
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            color: "var(--ink-700)",
-                            lineHeight: 1.45,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            letterSpacing: ".02em",
+                            padding: "2px 5px",
+                            borderRadius: "var(--r-badge-sm)",
+                            color: "var(--indigo-600)",
                             background: "var(--indigo-100)",
-                            borderRadius: "var(--r-control)",
-                            padding: "8px 10px",
                           }}
                         >
-                          {detail.prompt}
-                        </div>
+                          {detail.kind}
+                        </span>
+                      </DetailRow>
+                      <DetailRow label="Dimensi">
+                        <Mono>{detail.dims} px</Mono>
+                      </DetailRow>
+                      <DetailRow label="Ukuran">
+                        <Mono>{detail.sizeText}</Mono>
+                      </DetailRow>
+                      <DetailRow label="Ditambahkan">
+                        <Mono>{detail.added}</Mono>
+                      </DetailRow>
+                    </div>
+                    {(sourceImage || detail.prompt) && (
+                      <div
+                        style={{
+                          marginTop: 14,
+                          display: "flex",
+                          flexDirection: "row",
+                          gap: 12,
+                          padding: 12,
+                          borderRadius: "var(--r-control)",
+                          border: "1px solid var(--line-3)",
+                          background: "var(--fill-1)",
+                        }}
+                      >
+                        {sourceImage && (
+                          <div>
+                            <div
+                              style={{
+                                fontSize: 11.5,
+                                color: "var(--ink-500)",
+                                marginBottom: 7,
+                              }}
+                            >
+                              Sumber
+                            </div>
+                            <div
+                              onClick={() => selectAsset(sourceImage.path)}
+                              title={sourceImage.filename}
+                              style={{
+                                position: "relative",
+                                width: 72,
+                                height: 72,
+                                borderRadius: "var(--r-card)",
+                                overflow: "hidden",
+                                border: "1px solid var(--line-3)",
+                                background: "var(--fill-2, var(--fill-1))",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <img
+                                src={convertFileSrc(sourceImage.path)}
+                                alt={sourceImage.filename}
+                                loading="lazy"
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {detail.prompt && (
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontSize: 11.5,
+                                color: "var(--ink-500)",
+                                marginBottom: 5,
+                                padding: "0 10px",
+                              }}
+                            >
+                              Prompt
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: "var(--ink-700)",
+                                lineHeight: 1.45,
+                                background: "var(--indigo-100)",
+                                borderRadius: "var(--r-control)",
+                                padding: "8px 10px",
+                              }}
+                            >
+                              {detail.prompt}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
+                </div>
 
                 {children.length > 0 && (
                   <div style={{ marginTop: 14 }}>
@@ -1889,8 +1860,8 @@ export default function Assets() {
                     </div>
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(3, 1fr)",
+                        display: "flex",
+                        flexWrap: "wrap",
                         gap: 8,
                       }}
                     >
@@ -1927,8 +1898,8 @@ export default function Assets() {
                 {/* Template picker — pick one or more, generate as a batch */}
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))",
+                    display: "flex",
+                    flexWrap: "wrap",
                     gap: 10,
                     marginBottom: 12,
                   }}
@@ -1939,7 +1910,7 @@ export default function Assets() {
                       <div
                         key={t.id}
                         onClick={() => toggleTemplate(t.id)}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: "pointer", width: 120 }}
                       >
                         <div
                           style={{
@@ -1967,36 +1938,7 @@ export default function Assets() {
                               }}
                             />
                           ) : (
-                            <svg
-                              width="24"
-                              height="24"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              style={{ color: "var(--ink-350)" }}
-                            >
-                              <rect
-                                x="3"
-                                y="4"
-                                width="18"
-                                height="16"
-                                rx="2"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                              />
-                              <circle
-                                cx="8.5"
-                                cy="9.5"
-                                r="1.5"
-                                fill="currentColor"
-                              />
-                              <path
-                                d="M4 17l5-5 4 4 3-3 4 4"
-                                stroke="currentColor"
-                                strokeWidth="1.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
+                            <IconPhoto size={24} color="var(--ink-350)" stroke={1.5} />
                           )}
                           {isSelected && (
                             <div
@@ -2035,12 +1977,7 @@ export default function Assets() {
                   disabled={generating || selectedTemplates.size === 0}
                   onClick={generateFromTemplates}
                 >
-                  <svg width="14" height="14" viewBox="0 0 15 15">
-                    <path
-                      d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
-                      fill="#fff"
-                    />
-                  </svg>
+                  <IconSparkles size={14} color="#fff" />
                   {generating
                     ? "Menghasilkan…"
                     : `Hasilkan ${selectedTemplates.size} varian`}
@@ -2087,12 +2024,7 @@ export default function Assets() {
                     />
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                       <Button variant="primary" disabled={generateDisabled} onClick={generate}>
-                        <svg width="14" height="14" viewBox="0 0 15 15">
-                          <path
-                            d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
-                            fill="#fff"
-                          />
-                        </svg>
+                        <IconSparkles size={14} color="#fff" />
                         {generateLabel}
                       </Button>
                       <Button variant="ghost" disabled={generating} onClick={toggleVariant}>
@@ -2124,12 +2056,7 @@ export default function Assets() {
                       background: "var(--indigo-100)",
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 15 15">
-                      <path
-                        d="M7.5 1.8l1.3 3.4 3.4 1.3-3.4 1.3L7.5 11.2 6.2 7.8 2.8 6.5 6.2 5.2Z"
-                        fill="var(--indigo-500)"
-                      />
-                    </svg>
+                    <IconSparkles size={16} color="var(--indigo-500)" />
                     <div style={{ flex: 1, lineHeight: 1.3 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--indigo-600)" }}>
                         Buat varian dengan prompt
@@ -2159,16 +2086,7 @@ export default function Assets() {
 
               <div style={{ padding: "14px 18px", borderTop: "1px solid var(--line-1)" }}>
                   <Button variant="danger" disabled={deleting} onClick={del}>
-                    <svg width="14" height="14" viewBox="0 0 15 15">
-                      <path
-                        d="M3 4h9M6 4V2.8h3V4M4.2 4l.6 8a1 1 0 0 0 1 .95h3.4a1 1 0 0 0 1-.95l.6-8"
-                        stroke="var(--red-600)"
-                        strokeWidth={1.2}
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                    <IconTrash size={14} color="var(--red-600)" stroke={1.2} />
                     {deleting ? "Menghapus…" : "Hapus aset"}
                   </Button>
                 </div>
@@ -2232,32 +2150,6 @@ export function Segmented<T extends string>({
         );
       })}
     </div>
-  );
-}
-
-function GridIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
-      <rect x="2" y="2" width="4.5" height="4.5" rx="1" fill="currentColor" />
-      <rect x="8.5" y="2" width="4.5" height="4.5" rx="1" fill="currentColor" />
-      <rect x="2" y="8.5" width="4.5" height="4.5" rx="1" fill="currentColor" />
-      <rect x="8.5" y="8.5" width="4.5" height="4.5" rx="1" fill="currentColor" />
-    </svg>
-  );
-}
-
-function ListIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
-      <rect x="2" y="2.5" width="3" height="3" rx="0.7" fill="currentColor" />
-      <rect x="2" y="9.5" width="3" height="3" rx="0.7" fill="currentColor" />
-      <path
-        d="M6.5 4h6.5M6.5 11h6.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
   );
 }
 

@@ -12,7 +12,7 @@ const STORAGE_DIR_KEY: &str = "storage_dir";
 const ACTIVE_PROVIDER_KEY: &str = "active_provider";
 
 /// `settings` key holding a given provider's API key. Matches the historical
-/// per-provider naming (`<provider_id>_api_key`, e.g. `replicate_api_key`).
+/// per-provider naming (`<provider_id>_api_key`, e.g. `google_api_key`).
 fn api_key_setting_key(provider_id: &str) -> String {
     format!("{}_api_key", provider_id)
 }
@@ -52,7 +52,7 @@ impl Db {
                 id TEXT PRIMARY KEY,
                 prompt TEXT NOT NULL,
                 input_data_uri TEXT NOT NULL,
-                provider TEXT NOT NULL DEFAULT 'replicate',
+                provider TEXT NOT NULL DEFAULT 'google',
                 status TEXT NOT NULL DEFAULT 'pending',
                 poll_url TEXT,
                 output_path TEXT,
@@ -75,13 +75,31 @@ impl Db {
         // since on an existing DB the `CREATE TABLE IF NOT EXISTS` above is a no-op
         // and doesn't add the new columns.
         let _ = conn.execute(
-            "ALTER TABLE generations ADD COLUMN provider TEXT NOT NULL DEFAULT 'replicate'",
+            "ALTER TABLE generations ADD COLUMN provider TEXT NOT NULL DEFAULT 'google'",
             [],
         );
         let _ = conn.execute("ALTER TABLE images ADD COLUMN id TEXT", []);
         let _ = conn.execute("ALTER TABLE images ADD COLUMN title TEXT", []);
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN logs TEXT", []);
+
+        // The Replicate provider was removed. Databases from before that keep
+        // finished rows' provider as-is (historical record), but anything that
+        // would still be dispatched to it must be moved off: the global
+        // selection falls back to google, and unfinished replicate jobs are
+        // failed (their poll URLs point at a backend we can no longer talk to).
+        conn.execute(
+            "UPDATE settings SET value = 'google'
+             WHERE key = ?1 AND value = 'replicate'",
+            params![ACTIVE_PROVIDER_KEY],
+        )
+        .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
+        conn.execute(
+            "UPDATE generations SET status = 'failed', error = 'Replicate provider was removed'
+             WHERE provider = 'replicate' AND status IN ('queued', 'pending')",
+            [],
+        )
+        .map_err(|e| format!("Failed to fail orphaned replicate generations: {}", e))?;
 
         // Index on the source link, created after the column is guaranteed to exist.
         conn.execute(

@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-05 (Google/Gemini provider now uses the async Batch API
-— `batchGenerateContent` inline job + poll; query-driven frontend polling)
+**Last updated**: 2026-07-07 (Replicate provider removed — Google/Gemini is the
+sole registered provider; DB migration moves legacy `replicate` state to google)
 
 > **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
 > Windows-specific issues (title bar config, `\\?\` canonical paths, default
@@ -47,7 +47,6 @@ Tauri v2 app, two halves over `invoke()`.
 | `lib.rs` | Tauri setup: opens DB, runs `seed_from_disk()`, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | `ImageProvider` trait, `GenerateRequest`/`CreateOutcome`/`PollOutcome`/`ProviderInfo`, and the provider registry (`all_providers`/`get_provider`) |
-| `providers/replicate.rs` | Concrete Replicate impl (`google/nano-banana-2`, async poll) |
 | `providers/google.rs` | Concrete Google/Gemini impl (async Batch API, `gemini-3.1-flash-image`, `:batchGenerateContent` inline job + poll operation, retries transient 5xx on create) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
@@ -63,9 +62,9 @@ prompt), `refresh_generation`, `list_providers`,
 Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
 `all_providers()`; the settings dropdown, per-provider API-key inputs, and
-per-generation dispatch are all driven off that registry. Registered providers:
-**Replicate** (async, `google/nano-banana-2`) and **Google/Gemini** (async, via
-the **Batch API**). Google submits a single-request inline batch job — `POST
+per-generation dispatch are all driven off that registry. The sole registered
+provider is **Google/Gemini** (async, via the **Batch API**). Google submits a
+single-request inline batch job — `POST
 {v1beta}/models/gemini-3.1-flash-image:batchGenerateContent` with the prompt as a
 text part and the source image as an `inline_data` part, `response_modalities:
 [TEXT, IMAGE]` — and returns the operation name as the poll URL; `poll` GETs
@@ -76,13 +75,16 @@ for 50% cost and higher rate limits. The Batch REST response is loosely specced 
 state appears as `BATCH_STATE_*` (REST) or `JOB_STATE_*` (SDKs) and nests under
 `metadata`/`response` — so `google.rs` parses the operation as `serde_json::Value`
 and searches defensively (`find_state` by suffix, recursive `find_inline_image`
-and `find_error_message`) rather than relying on a fixed shape. Both
-registered providers are async-poll (`CreateOutcome::Pending { poll_url }`,
-advanced by `poll`); the trait *also* supports synchronous providers
-(`CreateOutcome::Done { image_bytes }`, saved immediately) for future backends,
-even though none is registered today. The active provider is a **global choice**
-stored in the DB `settings` table (`active_provider` key) and each `generations`
-row records the `provider` that produced it.
+and `find_error_message`) rather than relying on a fixed shape. Google is
+async-poll (`CreateOutcome::Pending { poll_url }`, advanced by `poll`); the
+trait *also* supports synchronous providers (`CreateOutcome::Done {
+image_bytes }`, saved immediately) for future backends, even though none is
+registered today. The active provider is a **global choice** stored in the DB
+`settings` table (`active_provider` key) and each `generations` row records the
+`provider` that produced it. A one-time migration in `db.rs::init_tables`
+handles databases from when **Replicate** was registered: `active_provider =
+'replicate'` is rewritten to `google`, and unfinished replicate generations are
+marked `failed` (finished rows keep `provider = 'replicate'` as history).
 
 ### Key constraints
 
@@ -93,7 +95,7 @@ row records the `provider` that produced it.
   `seed_from_disk()` idempotently populates the DB from existing files in the
   configured storage dir.
 - **API key** — stored server-side in the DB `settings` table per provider
-  under key `<provider_id>_api_key` (e.g. `replicate_api_key`). Written via
+  under key `<provider_id>_api_key` (e.g. `google_api_key`). Written via
   `set_api_key` (empty string clears it); the value never leaves the backend —
   the frontend only queries presence via `has_api_key`. Generation reads the key
   from the DB itself: `create_prediction` looks it up by the passed `provider`

@@ -10,6 +10,7 @@ import {
   setApiKey as saveApiKey,
   type ProviderInfo,
 } from "../lib/tauri";
+import { IconX } from "../lib/icons";
 
 const styles = {
   header: {
@@ -419,14 +420,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       <div style={styles.header}>
         <h1 style={styles.title}>Pengaturan</h1>
         <div onClick={onClose} style={styles.closeBtn}>
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <path
-              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-              stroke="currentColor"
-              strokeWidth={1.4}
-              strokeLinecap="round"
-            />
-          </svg>
+          <IconX size={12} />
         </div>
       </div>
       <div style={styles.body}>

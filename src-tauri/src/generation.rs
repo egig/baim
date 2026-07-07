@@ -391,7 +391,7 @@ fn default_provider() -> String {
 /// on either side.
 ///
 /// `provider` records which backend produced it, so a later refresh polls the
-/// right one; it defaults to `replicate` when absent (legacy sidecars/rows).
+/// right one; it defaults to `google` when absent (legacy sidecars/rows).
 ///
 /// `status` is one of:
 /// - `"pending"`  — created in async mode, awaiting a `refresh_generation` poll.
@@ -416,9 +416,9 @@ pub struct Generation {
     #[serde(default)]
     pub source_id: Option<String>,
     /// The provider's latest log blob for this generation, refreshed on every
-    /// poll (Replicate streams a growing text log; Google's Batch API has none,
-    /// so it stays `None`). Surfaced in the generation detail panel. `None` for
-    /// legacy rows and queued jobs that haven't been submitted yet.
+    /// poll (Google's Batch API has none, so it stays `None`; a future provider
+    /// may stream real logs). Surfaced in the generation detail panel. `None`
+    /// for legacy rows and queued jobs that haven't been submitted yet.
     #[serde(default)]
     pub logs: Option<String>,
     pub created_at: i64,

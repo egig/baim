@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { generationsQuery, isActive } from "./lib/queries";
 import Settings from "./routes/settings";
 import Generations from "./routes/generations";
+import { IconX, IconStack2, IconSettings } from "./lib/icons";
 
 /* ---------- escape layering ---------- */
 
@@ -101,14 +102,7 @@ export const ImageViewer = memo(function ImageViewer({
           background: "rgba(255,255,255,.14)",
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 12 12">
-          <path
-            d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-            stroke="currentColor"
-            strokeWidth={1.4}
-            strokeLinecap="round"
-          />
-        </svg>
+        <IconX size={14} />
       </div>
     </div>
   );
@@ -234,47 +228,8 @@ export function useShell() {
   return useContext(ShellContext);
 }
 
-function strokePath(d: string) {
-  return (
-    <path
-      d={d}
-      stroke="currentColor"
-      strokeWidth={1.2}
-      fill="none"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  );
-}
-
-const iconQueue = (
-  <svg width="15" height="15" viewBox="0 0 15 15">
-    {strokePath("M2.5 3.5h10M2.5 7.5h10M2.5 11.5h10")}
-  </svg>
-);
-
-const iconSettings = (
-  <svg width="15" height="15" viewBox="0 0 15 15">
-    {strokePath("M2.5 5h4.6M10.7 5h1.8")}
-    {strokePath("M2.5 10h1.8M7.7 10h4.8")}
-    <circle
-      cx="9"
-      cy="5"
-      r="1.7"
-      stroke="currentColor"
-      strokeWidth={1.2}
-      fill="none"
-    />
-    <circle
-      cx="6"
-      cy="10"
-      r="1.7"
-      stroke="currentColor"
-      strokeWidth={1.2}
-      fill="none"
-    />
-  </svg>
-);
+const iconQueue = <IconStack2 size={15} />;
+const iconSettings = <IconSettings size={15} />;
 
 /* ---------- titlebar ---------- */
 
