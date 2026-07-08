@@ -1,4 +1,4 @@
-use catalog_core::provider::{
+use sabi::provider::{
     CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo,
 };
 

@@ -1,23 +1,23 @@
-name = "catalog-cloud"
+name = "sabi-cloud"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "catalog-db"
+database_name = "sabi-db"
 database_id = ""
 
 [[r2_buckets]]
 binding = "IMAGES"
-bucket_name = "catalog-images"
+bucket_name = "sabi-images"
 
 [[queues.producers]]
 binding = "QUEUE"
-queue = "catalog-jobs"
+queue = "sabi-jobs"
 
 [[queues.consumers]]
-queue = "catalog-jobs"
+queue = "sabi-jobs"
 max_batch_size = 10
 max_retries = 5
 

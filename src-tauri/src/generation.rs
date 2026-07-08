@@ -256,7 +256,7 @@ fn save_generated_image(
 /// files) keep working without any migration.
 pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join("Pictures").join("catalog-gen"))
+    Ok(home.join("Pictures").join("sabi-images"))
 }
 
 /// Return the currently configured storage directory as a string.

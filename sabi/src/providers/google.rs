@@ -275,7 +275,7 @@ impl ImageProvider for GoogleProvider {
 
         let payload = CreateBatchRequest {
             batch: Batch {
-                display_name: "catalog-image-generator".to_string(),
+                display_name: "SABI".to_string(),
                 input_config: InputConfig {
                     requests: RequestList {
                         requests: vec![InlineRequest {

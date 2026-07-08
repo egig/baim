@@ -1,5 +1,5 @@
 // Re-export shared types from catalog-core.
-pub use catalog_core::provider::{
+pub use sabi::provider::{
     CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo, DEFAULT_PROVIDER,
 };
 

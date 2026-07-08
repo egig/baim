@@ -14,7 +14,7 @@ use tauri::Manager;
 /// a storage folder, and the folder can be relocated freely.
 fn db_path() -> PathBuf {
     let data = dirs::data_dir().expect("Could not find data directory");
-    data.join("com.catalog-image-generator.app")
+    data.join("com.recraftory.sabi")
         .join("catalog.db")
 }
 

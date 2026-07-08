@@ -71,7 +71,7 @@ OS), falling back to the current `home/Pictures` join if it returns `None`.
 Keep the fallback so existing installs don't lose their seeded files.
 
 **Verify:** On a fresh profile (or after clearing the `storage_dir` row from
-the settings table in `%APPDATA%\com.catalog-image-generator.app\catalog.db`),
+the settings table in `%APPDATA%\com.recraftory.sabi\catalog.db`),
 the app defaults to the real Pictures folder.
 
 ## Task 4 — Full Windows build verification

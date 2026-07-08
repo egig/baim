@@ -1,7 +1,6 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-07 (added `catalog-core` shared crate, Cloudflare Workers
-backend in `packages/cloud-backend/`, `CloudProvider` for desktop → cloud routing)
+**Last updated**: 2026-07-08 (renamed project from `catalog-image-generator` to `sabi`)
 
 > **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
 > Windows-specific issues (title bar config, `\\?\` canonical paths, default
@@ -17,7 +16,7 @@ backend in `packages/cloud-backend/`, `CloudProvider` for desktop → cloud rout
 | `npx tauri dev` | Full desktop app (spawns Vite via `beforeDevCommand`) |
 | `npx tauri build` | Production bundle |
 | `cargo check` / `cargo build` | Rust workspace (from repo root) |
-| `cargo check -p catalog-core` | Shared crate only |
+| `cargo check -p sabi` | Shared crate only |
 | `npm run dev` (from `packages/cloud-backend/`) | `wrangler dev` for Workers dev server |
 | `npm run typecheck` (from `packages/cloud-backend/`) | TypeScript typecheck for cloud backend |
 | `npm run migrate` (from `packages/cloud-backend/`) | Apply D1 migration |
@@ -61,8 +60,8 @@ Tauri v2 app, two halves over `invoke()`.
 |---|---|
 | `lib.rs` | Tauri setup: opens DB, runs `seed_from_disk()`, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
-| `provider.rs` | Re-exports `ImageProvider` trait + types from `catalog-core`; provider registry (`all_providers`/`get_provider`) |
-| `providers/google.rs` | Re-export of GoogleProvider from `catalog-core` |
+| `provider.rs` | Re-exports `ImageProvider` trait + types from `sabi`; provider registry (`all_providers`/`get_provider`) |
+| `providers/google.rs` | Re-export of GoogleProvider from `sabi` |
 | `providers/cloud.rs` | `CloudProvider` — REST client to cloud backend (Cloudflare Workers) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
@@ -80,7 +79,7 @@ Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
 `all_providers()`; the settings dropdown, per-provider API-key inputs, and
 per-generation dispatch are all driven off that registry. The trait and the
-**Google/Gemini** implementation live in the `catalog-core` shared crate, used
+**Google/Gemini** implementation live in the `sabi` shared crate, used
 by both the desktop app and (conceptually) the cloud backend.
 
 **Registered providers:**
@@ -106,7 +105,7 @@ rewritten to `google`, and unfinished replicate generations are marked `failed`
 
 ### Key constraints
 
-- **Database-driven** — SQLite at `<app-data>/com.catalog-image-generator.app/catalog.db`
+- **Database-driven** — SQLite at `<app-data>/com.recraftory.sabi/catalog.db`
   (`dirs::data_dir()`, **not** inside the image storage folder — so the app
   always boots and the folder can be relocated). `get_images` /
   `get_generations` query the DB, not the filesystem. On startup,
@@ -121,12 +120,12 @@ rewritten to `google`, and unfinished replicate generations are marked `failed`
   command takes the key as a param.
 - **Storage directory** — user-configurable. Persisted in the DB `settings`
   table (`storage_dir` key), cached on the `Db` struct (`db.storage_dir()`),
-  defaults to `~/Pictures/catalog-gen` (`generation::default_storage_dir`).
+  defaults to `~/Pictures/sabi-images` (`generation::default_storage_dir`).
   Changed via `set_storage_dir` (Settings page → native folder picker).
 - **Image files** — saved in the configured storage dir; generated images named
   `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
   `convertFileSrc(path)` (Tauri asset protocol). The static
-  `"$HOME/Pictures/catalog-gen/**/*"` scope in `tauri.conf.json` is only the
+  `"$HOME/Pictures/sabi-images/**/*"` scope in `tauri.conf.json` is only the
   default; the configured dir is registered at runtime via
   `app.asset_protocol_scope().allow_directory(dir, true)` (in `lib.rs` setup and
   on every `set_storage_dir`). Requires `protocol-asset` Cargo feature.
@@ -150,7 +149,7 @@ rewritten to `google`, and unfinished replicate generations are marked `failed`
   `uuid`, `dirs`, `tokio`, `base64`, `async-trait` (provider trait),
   `tauri-plugin-dialog` (folder picker).
 
-### Shared crate (`catalog-core/`)
+### Shared crate (`sabi/`)
 
 Cargo workspace member. Contains the `ImageProvider` trait + types and the
 `GoogleProvider` implementation. Used by the desktop app (`src-tauri/`) and

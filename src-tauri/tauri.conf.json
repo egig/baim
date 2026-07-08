@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Catalog Image Generator",
+  "productName": "SABI",
   "version": "0.1.0",
-  "identifier": "com.catalog-image-generator.app",
+  "identifier": "com.recraftory.sabi",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Catalog Image Generator",
+        "title": "SABI",
         "width": 1024,
         "height": 768,
         "minWidth": 720,
@@ -28,7 +28,7 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' asset: http://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/Pictures/catalog-gen/**/*"]
+        "scope": ["$HOME/Pictures/sabi-images/**/*"]
       }
     }
   },

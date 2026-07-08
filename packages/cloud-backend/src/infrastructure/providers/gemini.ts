@@ -10,7 +10,7 @@ export class GeminiClient implements ProviderClient {
 
     const payload = {
       batch: {
-        display_name: "catalog-image-generator",
+        display_name: "SABI",
         input_config: {
           requests: {
             requests: [
