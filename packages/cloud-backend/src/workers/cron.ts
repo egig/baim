@@ -1,19 +1,23 @@
 import type { Env } from "../env";
-import type { Job } from "../domain/job";
 import type { JobRepository, ImageStore } from "../domain/ports";
 import { D1JobRepository } from "../infrastructure/d1/job-repository";
 import { R2ImageStore } from "../infrastructure/r2/image-store";
+import { D1ApiKeyRepository } from "../infrastructure/d1/user-repository";
+import { D1CreditLedgerRepository } from "../infrastructure/d1/credit-ledger-repository";
+import { CreditService } from "../application/credit-service";
+import { markJobFailed } from "../application/job-failure";
 import { getProviderClient } from "../infrastructure/providers/provider-registry";
 
 export async function handleCron(env: Env): Promise<void> {
   const jobRepo: JobRepository = new D1JobRepository(env.DB);
   const imageStore: ImageStore = new R2ImageStore(env.IMAGES);
+  const creditService = new CreditService(new D1CreditLedgerRepository(env.DB), new D1ApiKeyRepository(env.DB));
   const pending = await jobRepo.findPending();
 
   for (const job of pending) {
     try {
       if (!job.pollUrl) {
-        await failJob(jobRepo, job, "Pending job has no poll URL");
+        await markJobFailed(jobRepo, creditService, job, "Pending job has no poll URL");
         continue;
       }
 
@@ -38,21 +42,13 @@ export async function handleCron(env: Env): Promise<void> {
         }
 
         case "failed":
-          await failJob(jobRepo, job, result.error);
+          await markJobFailed(jobRepo, creditService, job, result.error);
           break;
       }
     } catch (err) {
       console.error(`Cron: error polling job ${job.id}:`, err);
     }
   }
-}
-
-async function failJob(jobRepo: JobRepository, job: Job, error: string): Promise<void> {
-  console.error(`Job ${job.id} failed: ${error}`);
-  job.status = "failed";
-  job.error = error;
-  job.pollUrl = null;
-  await jobRepo.update(job);
 }
 
 function mimeForExt(ext: string): string {

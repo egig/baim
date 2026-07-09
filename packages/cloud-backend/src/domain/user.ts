@@ -7,5 +7,6 @@ export interface ApiKey {
   id: string;
   userId: string;
   keyHash: string;
+  creditBalance: number;
   createdAt: string;
 }

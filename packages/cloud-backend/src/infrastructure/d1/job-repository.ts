@@ -5,20 +5,20 @@ export class D1JobRepository implements JobRepository {
   constructor(private db: D1Database) {}
 
   async create(job: Job): Promise<void> {
-    const { id, userId, prompt, provider, providerApiKey, status, pollUrl, outputPath, error, logs, sourceDataUri, createdAt } = job;
+    const { id, userId, apiKeyId, prompt, provider, providerApiKey, status, pollUrl, outputPath, error, logs, sourceDataUri, createdAt } = job;
     await this.db
       .prepare(
-        `INSERT INTO jobs (id, user_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO jobs (id, user_id, api_key_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .bind(id, userId, prompt, provider, providerApiKey, status, pollUrl, outputPath, error, logs, sourceDataUri, createdAt)
+      .bind(id, userId, apiKeyId, prompt, provider, providerApiKey, status, pollUrl, outputPath, error, logs, sourceDataUri, createdAt)
       .run();
   }
 
   async findById(id: string): Promise<Job | null> {
     const row = await this.db
       .prepare(
-        `SELECT id, user_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
+        `SELECT id, user_id, api_key_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
          FROM jobs WHERE id = ?`
       )
       .bind(id)
@@ -30,7 +30,7 @@ export class D1JobRepository implements JobRepository {
   async findQueued(limit: number): Promise<Job[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT id, user_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
+        `SELECT id, user_id, api_key_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
          FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?`
       )
       .bind(limit)
@@ -41,7 +41,7 @@ export class D1JobRepository implements JobRepository {
   async findPending(): Promise<Job[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT id, user_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
+        `SELECT id, user_id, api_key_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
          FROM jobs WHERE status = 'pending'`
       )
       .all();
@@ -51,7 +51,7 @@ export class D1JobRepository implements JobRepository {
   async findByUserId(userId: string): Promise<Job[]> {
     const { results } = await this.db
       .prepare(
-        `SELECT id, user_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
+        `SELECT id, user_id, api_key_id, prompt, provider, provider_api_key, status, poll_url, output_path, error, logs, source_data_uri, created_at
          FROM jobs WHERE user_id = ? ORDER BY created_at DESC`
       )
       .bind(userId)
@@ -76,6 +76,7 @@ function rowToJob(row: unknown): Job {
   return {
     id: r.id as string,
     userId: r.user_id as string,
+    apiKeyId: r.api_key_id as string,
     prompt: r.prompt as string,
     provider: r.provider as string,
     providerApiKey: r.provider_api_key as string,

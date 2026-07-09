@@ -139,6 +139,11 @@ export async function saveImage(
   });
 }
 
+/** The remaining credit balance on the configured cloud API key. */
+export async function getCloudCreditBalance(): Promise<number> {
+  return invoke<number>("get_cloud_credit_balance");
+}
+
 export async function getStorageDir(): Promise<string> {
   return invoke<string>("get_storage_dir");
 }

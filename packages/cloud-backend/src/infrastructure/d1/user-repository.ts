@@ -27,23 +27,37 @@ export class D1ApiKeyRepository implements ApiKeyRepository {
 
   async create(key: ApiKey): Promise<void> {
     await this.db
-      .prepare("INSERT INTO api_keys (id, user_id, key_hash, created_at) VALUES (?, ?, ?, ?)")
-      .bind(key.id, key.userId, key.keyHash, key.createdAt)
+      .prepare("INSERT INTO api_keys (id, user_id, key_hash, credit_balance, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(key.id, key.userId, key.keyHash, key.creditBalance, key.createdAt)
       .run();
+  }
+
+  async findById(id: string): Promise<ApiKey | null> {
+    const row = await this.db
+      .prepare("SELECT id, user_id, key_hash, credit_balance, created_at FROM api_keys WHERE id = ?")
+      .bind(id)
+      .first();
+    if (!row) return null;
+    return rowToApiKey(row);
   }
 
   async findByKeyHash(hash: string): Promise<ApiKey | null> {
     const row = await this.db
-      .prepare("SELECT id, user_id, key_hash, created_at FROM api_keys WHERE key_hash = ?")
+      .prepare("SELECT id, user_id, key_hash, credit_balance, created_at FROM api_keys WHERE key_hash = ?")
       .bind(hash)
       .first();
     if (!row) return null;
-    const r = row as Record<string, unknown>;
-    return {
-      id: r.id as string,
-      userId: r.user_id as string,
-      keyHash: r.key_hash as string,
-      createdAt: r.created_at as string,
-    };
+    return rowToApiKey(row);
   }
+}
+
+function rowToApiKey(row: unknown): ApiKey {
+  const r = row as Record<string, unknown>;
+  return {
+    id: r.id as string,
+    userId: r.user_id as string,
+    keyHash: r.key_hash as string,
+    creditBalance: r.credit_balance as number,
+    createdAt: r.created_at as string,
+  };
 }

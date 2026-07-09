@@ -11,6 +11,7 @@ import {
   type ProviderInfo,
 } from "../lib/tauri";
 import { IconX } from "../lib/icons";
+import CloudCreditsSection from "./CloudCreditsSection";
 
 const styles = {
   header: {
@@ -209,6 +210,12 @@ function ProviderSection({
         <>
           <div style={styles.divider} />
           <ApiKeySection key={activeProvider.id} provider={activeProvider} />
+          {activeProvider.id === "cloud" && (
+            <>
+              <div style={styles.divider} />
+              <CloudCreditsSection />
+            </>
+          )}
         </>
       )}
     </div>

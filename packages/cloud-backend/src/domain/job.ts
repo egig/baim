@@ -3,6 +3,7 @@ export type JobStatus = "queued" | "pending" | "succeeded" | "failed";
 export interface Job {
   id: string;
   userId: string;
+  apiKeyId: string;
   prompt: string;
   provider: string;
   providerApiKey: string;

@@ -16,6 +16,17 @@ import { IconX, IconLoader2 } from "../lib/icons";
 /** Which generation states the list is filtered to. */
 type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
 
+/** Sentinel error returned by the cloud provider when the key's credit
+ *  balance is exhausted (sabi::provider::OUT_OF_CREDITS_ERROR). Shown as a
+ *  distinct message rather than the raw generic-looking string. */
+const OUT_OF_CREDITS = "OUT_OF_CREDITS";
+
+function errorLabel(error: string): string {
+  return error === OUT_OF_CREDITS
+    ? "Kredit habis — tambah kredit di Pengaturan"
+    : error;
+}
+
 /** Trim, collapse whitespace, and truncate a prompt to a short preview on a word
  *  boundary. The 2-line CSS clamp stays as a second safety net. */
 function shortPrompt(text: string): string {
@@ -335,7 +346,7 @@ function GenerationDetail({
                 wordBreak: "break-word",
               }}
             >
-              {gen.error ?? "Gagal"}
+              {errorLabel(gen.error ?? "Gagal")}
             </div>
           </div>
         ) : (
@@ -777,7 +788,7 @@ export default function Generations({ onClose }: { onClose: () => void }) {
                         }}
                       >
                         {g.status === "failed" && g.error ? (
-                          <span style={{ color: "#b91c1c" }}>{g.error}</span>
+                          <span style={{ color: "#b91c1c" }}>{errorLabel(g.error)}</span>
                         ) : (
                           shortPrompt(g.prompt)
                         )}

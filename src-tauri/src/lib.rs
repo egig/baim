@@ -75,6 +75,7 @@ pub fn run() {
             commands::save_uploaded_image,
             commands::get_cloud_endpoint,
             commands::set_cloud_endpoint,
+            commands::get_cloud_credit_balance,
             commands::get_storage_dir,
             commands::set_storage_dir,
         ])

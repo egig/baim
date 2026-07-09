@@ -148,6 +148,15 @@ pub fn set_cloud_endpoint(
     Ok(())
 }
 
+/// The remaining credit balance on the configured cloud API key.
+#[tauri::command]
+pub async fn get_cloud_credit_balance(state: tauri::State<'_, Db>) -> Result<i64, String> {
+    let api_key = state
+        .read_api_key("cloud")
+        .ok_or_else(|| "No cloud API key configured".to_string())?;
+    crate::providers::cloud::get_credit_balance(&api_key).await
+}
+
 #[tauri::command]
 pub fn get_storage_dir(state: tauri::State<'_, Db>) -> String {
     generation::get_storage_dir(&*state)

@@ -1,4 +1,5 @@
 import type { UserRepository, ApiKeyRepository } from "../domain/ports";
+import { hashKey } from "./hash-key";
 
 export class AuthService {
   constructor(
@@ -16,29 +17,20 @@ export class AuthService {
       id: crypto.randomUUID(),
       userId,
       keyHash,
+      creditBalance: 0,
       createdAt: new Date().toISOString(),
     });
 
     return { apiKey: rawKey, userId };
   }
 
-  async authenticate(authorization: string | undefined): Promise<{ userId: string } | null> {
+  async authenticate(authorization: string | undefined): Promise<{ userId: string; apiKeyId: string } | null> {
     if (!authorization) return null;
     const parts = authorization.split(" ");
     if (parts.length !== 2 || parts[0] !== "Bearer") return null;
     const keyHash = await hashKey(parts[1]);
     const key = await this.apiKeys.findByKeyHash(keyHash);
     if (!key) return null;
-    return { userId: key.userId };
+    return { userId: key.userId, apiKeyId: key.id };
   }
-}
-
-async function hashKey(key: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(key);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const bytes = new Uint8Array(hash);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }

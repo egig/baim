@@ -1,40 +1,15 @@
 import type { Job } from "../domain/job";
 import type { JobRepository, ImageStore } from "../domain/ports";
-import { getProviderClient } from "../infrastructure/providers/provider-registry";
 
-export interface CreateJobInput {
-  userId: string;
-  prompt: string;
-  sourceDataUri: string;
-  provider: string;
-  providerApiKey: string;
-}
+export type RetryValidation =
+  | { ok: true; job: Job }
+  | { ok: false; reason: "not_found" | "forbidden" | "not_retryable" };
 
 export class JobService {
   constructor(
     private jobs: JobRepository,
     private images: ImageStore
   ) {}
-
-  async create(input: CreateJobInput): Promise<Job> {
-    const job: Job = {
-      id: crypto.randomUUID(),
-      userId: input.userId,
-      prompt: input.prompt,
-      provider: input.provider,
-      providerApiKey: input.providerApiKey,
-      status: "queued",
-      pollUrl: null,
-      outputPath: null,
-      error: null,
-      logs: null,
-      sourceDataUri: input.sourceDataUri,
-      createdAt: new Date().toISOString(),
-    };
-
-    await this.jobs.create(job);
-    return job;
-  }
 
   async getById(id: string): Promise<Job | null> {
     return this.jobs.findById(id);
@@ -44,26 +19,14 @@ export class JobService {
     return this.jobs.findByUserId(userId);
   }
 
-  async retry(id: string): Promise<Job | null> {
+  /** Validates that `id` is a failed job owned by `callerUserId`. Does not
+   *  create anything — the caller retries via the same charged-job-creation
+   *  path as any new job (see paid-job-orchestrator.ts). */
+  async validateRetry(id: string, callerUserId: string): Promise<RetryValidation> {
     const existing = await this.jobs.findById(id);
-    if (!existing || existing.status !== "failed") return null;
-
-    const newJob: Job = {
-      id: crypto.randomUUID(),
-      userId: existing.userId,
-      prompt: existing.prompt,
-      provider: existing.provider,
-      providerApiKey: existing.providerApiKey,
-      status: "queued",
-      pollUrl: null,
-      outputPath: null,
-      error: null,
-      logs: null,
-      sourceDataUri: existing.sourceDataUri,
-      createdAt: new Date().toISOString(),
-    };
-
-    await this.jobs.create(newJob);
-    return newJob;
+    if (!existing) return { ok: false, reason: "not_found" };
+    if (existing.userId !== callerUserId) return { ok: false, reason: "forbidden" };
+    if (existing.status !== "failed") return { ok: false, reason: "not_retryable" };
+    return { ok: true, job: existing };
   }
 }

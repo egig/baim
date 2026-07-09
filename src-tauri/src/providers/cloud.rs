@@ -1,6 +1,8 @@
 use sabi::provider::{
     CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo,
+    OUT_OF_CREDITS_ERROR,
 };
+use serde::Deserialize;
 
 /// CloudProvider delegates generation to the cloud backend (Cloudflare Workers).
 /// `req.api_key` is the cloud API key (Bearer token). `req.provider_api_key`
@@ -51,6 +53,9 @@ impl ImageProvider for CloudProvider {
             .await
             .map_err(|e| format!("Failed to read cloud response: {}", e))?;
 
+        if status.as_u16() == 402 {
+            return Err(OUT_OF_CREDITS_ERROR.to_string());
+        }
         if !status.is_success() {
             return Err(format!("Cloud API error ({}): {}", status, body_text));
         }
@@ -150,4 +155,44 @@ static CLOUD_ENDPOINT: OnceLock<String> = OnceLock::new();
 
 pub fn set_cloud_endpoint(endpoint: String) {
     let _ = CLOUD_ENDPOINT.set(endpoint);
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreditBalanceResponse {
+    credit_balance: i64,
+}
+
+/// Queries the cloud backend for the current key's remaining credit balance.
+pub async fn get_credit_balance(api_key: &str) -> Result<i64, String> {
+    let endpoint = CLOUD_ENDPOINT
+        .get()
+        .ok_or_else(|| "Cloud endpoint not configured")?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let resp = client
+        .get(format!("{}/api/credit-keys/me", endpoint))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach cloud backend: {}", e))?;
+
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read cloud response: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("Cloud API error ({}): {}", status, body_text));
+    }
+
+    let parsed: CreditBalanceResponse = serde_json::from_str(&body_text)
+        .map_err(|e| format!("Cloud API parse error: {}", e))?;
+
+    Ok(parsed.credit_balance)
 }
