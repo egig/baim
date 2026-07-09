@@ -17,10 +17,10 @@
 | `npx tauri build` | Production bundle |
 | `cargo check` / `cargo build` | Rust workspace (from repo root) |
 | `cargo check -p sabi` | Shared crate only |
-| `npm run dev` (from `packages/cloud-backend/`) | `wrangler dev` for Workers dev server |
-| `npm run typecheck` (from `packages/cloud-backend/`) | TypeScript typecheck for cloud backend |
-| `npm run migrate` (from `packages/cloud-backend/`) | Apply D1 migration |
-| `npm run deploy` (from `packages/cloud-backend/`) | Deploy Worker to Cloudflare |
+| `npm run dev` (from `packages/sabi-cloud/`) | `wrangler dev` for Workers dev server |
+| `npm run typecheck` (from `packages/sabi-cloud/`) | TypeScript typecheck for cloud backend |
+| `npm run migrate` (from `packages/sabi-cloud/`) | Apply D1 migration |
+| `npm run deploy` (from `packages/sabi-cloud/`) | Deploy Worker to Cloudflare |
 
 No test suite.
 
@@ -155,7 +155,7 @@ Cargo workspace member. Contains the `ImageProvider` trait + types and the
 `GoogleProvider` implementation. Used by the desktop app (`src-tauri/`) and
 available for the cloud backend (if ever needed in Rust).
 
-### Cloud backend (`packages/cloud-backend/`)
+### Cloud backend (`packages/sabi-cloud/`)
 
 Cloudflare Workers + D1 + R2. TypeScript with Hono router. DDD structure:
 
@@ -173,4 +173,4 @@ Cloudflare Workers + D1 + R2. TypeScript with Hono router. DDD structure:
 **API endpoints:** `POST /api/auth/register`, `POST /api/jobs`, `GET /api/jobs/:id`,
 `GET /api/jobs`, `POST /api/jobs/:id/retry`, `GET /api/images/:key`, `GET /api/models`.
 
-Deploy with `npm run deploy` (from `packages/cloud-backend/`). Requires `wrangler`.
+Deploy with `npm run deploy` (from `packages/sabi-cloud/`). Requires `wrangler`.

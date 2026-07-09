@@ -10,7 +10,7 @@
 - [x] Make `src-tauri/src/providers/google.rs` a re-export
 - [x] Verify `cargo build` works
 
-## Phase 2: Cloud Backend (`packages/cloud-backend/`)
+## Phase 2: Cloud Backend (`packages/sabi-cloud/`)
 
 - [ ] Scaffold Worker project with `hono`
 - [ ] Create D1 database + R2 bucket

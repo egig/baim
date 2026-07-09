@@ -49,17 +49,17 @@ sabi/
 ├── sabi/              Shared Rust crate (ImageProvider trait + GoogleProvider)
 ├── src-tauri/         Tauri v2 backend (Rust, SQLite)
 └── packages/
-    └── cloud-backend/ Cloudflare Workers (optional cloud mode)
+    └── sabi-cloud/    Cloudflare Workers (optional cloud mode)
 ```
 
 The frontend communicates with the Rust backend via Tauri `invoke()`. Image generation goes through the `ImageProvider` trait — providers register themselves in `all_providers()` and are driven from the settings UI. The active provider and API keys are stored in SQLite; the frontend never sees the key value.
 
 ## Cloud backend (optional)
 
-A Cloudflare Workers backend in `packages/cloud-backend/` supports offloading generation. Deploy with:
+A Cloudflare Workers backend in `packages/sabi-cloud/` supports offloading generation. Deploy with:
 
 ```bash
-cd packages/cloud-backend
+cd packages/sabi-cloud
 npm run deploy
 ```
 
