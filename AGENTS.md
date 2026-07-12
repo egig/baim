@@ -1,6 +1,8 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-08 (renamed project from `catalog-image-generator` to `sabi`)
+**Last updated**: 2026-07-12 (VS Code–style multi-workspace model: each opened
+folder gets its own catalog; `sabi.db` is now the app-wide workspace/settings
+registry)
 
 > **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
 > Windows-specific issues (title bar config, `\\?\` canonical paths, default
@@ -34,9 +36,12 @@ Tauri v2 app, two halves over `invoke()`.
   (no enums, no namespaces).
 - **Routes** (`src/main.tsx`):
   - `/` → `routes/assets/index.tsx` — asset library (main page); its
-    subcomponents live as siblings in `routes/assets/` (see below)
-  - `/settings` → `routes/settings.tsx` — settings page (API key + storage
-    location sections; folder picker via `@tauri-apps/plugin-dialog`)
+    subcomponents live as siblings in `routes/assets/` (see below). Its
+    toolbar's `WorkspaceSwitcher` (`routes/assets/WorkspaceSwitcher.tsx`) is
+    the only place the active folder is changed (native picker via
+    `@tauri-apps/plugin-dialog`, same as the old Settings folder picker).
+  - `/settings` → `routes/settings.tsx` — settings page (API key/provider
+    section only; no folder picker — see Workspaces below)
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
 - `src/root.tsx` — layout shell with sidebar, exports `Button` component.
@@ -54,20 +59,23 @@ Tauri v2 app, two halves over `invoke()`.
 
 | File | Role |
 |---|---|
-| `lib.rs` | Tauri setup: opens DB, runs `seed_from_disk()`, registers commands |
+| `lib.rs` | Tauri setup: opens the registry DB, resolves the boot workspace, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | Re-exports `ImageProvider` trait + types from `sabi`; provider registry (`all_providers`/`get_provider`) |
 | `providers/google.rs` | Re-export of GoogleProvider from `sabi` |
 | `providers/recraftory.rs` | `RecraftoryProvider` — REST client to cloud backend (Cloudflare Workers) |
-| `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
-| `db.rs` | SQLite queries for `images` and `generations` tables |
+| `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, `ImageEntry`/`Generation` types |
+| `db.rs` | `WorkspaceDb` — SQLite queries for one workspace's `images`/`generations` tables |
+| `registry.rs` | `RegistryDb` — `sabi.db`: global settings (API keys, active provider) + the `workspaces` table |
+| `workspace.rs` | `AppState`, `WorkspaceHandle`/`WorkspaceInfo`, `open_workspace`/`boot_workspace` — the workspace-switching orchestration |
 
 Commands: `create_prediction`, `create_predictions` (batch: one prediction per
 prompt), `refresh_generation`, `list_providers`,
 `get_active_provider`, `set_active_provider`, `has_api_key`, `set_api_key`,
 `get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
 `get_recraftory_endpoint`, `set_recraftory_endpoint`,
-`get_storage_dir`, `set_storage_dir`.
+`list_workspaces`, `get_active_workspace`, `open_workspace`,
+`forget_workspace`.
 
 ### Provider abstraction
 
@@ -92,59 +100,89 @@ by both the desktop app and (conceptually) the cloud backend.
   provider API key (e.g. Gemini) is passed alongside the Recraftory auth key in
   `provider_api_key`.
 
-The active provider is a **global choice** stored in the DB `settings` table
-(`active_provider` key) and each `generations` row records the `provider` that
-produced it. One-time migrations in `db.rs::init_tables` handle databases
-from before provider renames/removals: from when **Replicate** was registered,
-`active_provider = 'replicate'` is rewritten to `google`, and unfinished
-replicate generations are marked `failed` (finished rows keep
-`provider = 'replicate'` as history); from when the cloud provider was named
-**`cloud`**, `active_provider`, `generations.provider`, and the
-`cloud_api_key`/`cloud_endpoint` settings keys are rewritten to
+The active provider is a **global choice** stored in the registry's `settings`
+table (`active_provider` key) and each `generations` row (in whichever
+workspace produced it) records the `provider` that produced it. One-time
+migrations handle databases from before provider renames/removals, split
+across both DB types since `active_provider`/API-key settings live in the
+registry but `generations.provider` lives per-workspace: from when
+**Replicate** was registered, `registry.rs::init_tables` rewrites
+`active_provider = 'replicate'` to `google`, and `db.rs::init_tables` (run for
+every workspace) marks unfinished replicate generations `failed` (finished
+rows keep `provider = 'replicate'` as history); from when the cloud provider
+was named **`cloud`**, `registry.rs::init_tables` rewrites `active_provider`
+and the `cloud_api_key`/`cloud_endpoint` settings keys, while
+`db.rs::init_tables` rewrites `generations.provider` — both to
 `recraftory`/`recraftory_api_key`/`recraftory_endpoint`.
 
 ### Key constraints
 
-- **Database-driven** — SQLite at `<app-data>/com.recraftory.sabi/catalog.db`
-  (`dirs::data_dir()`, **not** inside the image storage folder — so the app
-  always boots and the folder can be relocated). `get_images` /
-  `get_generations` query the DB, not the filesystem. On startup,
-  `seed_from_disk()` idempotently populates the DB from existing files in the
-  configured storage dir.
-- **API key** — stored server-side in the DB `settings` table per provider
-  under key `<provider_id>_api_key` (e.g. `google_api_key`). Written via
-  `set_api_key` (empty string clears it); the value never leaves the backend —
-  the frontend only queries presence via `has_api_key`. Generation reads the key
-  from the DB itself: `create_prediction` looks it up by the passed `provider`
-  id, `refresh_generation` by the stored generation row's `provider`. Neither
-  command takes the key as a param.
-- **Storage directory** — user-configurable. Persisted in the DB `settings`
-  table (`storage_dir` key), cached on the `Db` struct (`db.storage_dir()`),
-  defaults to `~/Pictures/sabi-images` (`generation::default_storage_dir`).
-  Changed via `set_storage_dir` (Settings page → native folder picker).
-- **Image files** — saved in the configured storage dir; generated images named
-  `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
+- **Workspaces** — a workspace is a user-picked folder; images/generations
+  live in `<folder>/.sabi/catalog.db` (a `WorkspaceDb`), so a workspace is
+  self-contained and portable (copy/move the folder, its history comes with
+  it). Exactly **one workspace is active** at a time (`AppState.workspace:
+  Mutex<Arc<WorkspaceHandle>>` in `workspace.rs`), swapped wholesale by
+  `open_workspace` — never mutated in place. `get_images`/`get_generations`/
+  `create_prediction`/etc. all operate on the active workspace; none take a
+  workspace param, they read `AppState` via `active_workspace()`.
+  - **First-ever launch** (no known workspaces): auto-opens a default
+    workspace at `~/Pictures/sabi-images` (`generation::default_storage_dir`),
+    same zero-friction boot as before workspaces existed.
+  - **Later launches**: `workspace::boot_workspace` reopens the last-active
+    path (`sabi.db` setting `active_workspace_path`), falling back through the
+    recents list, then the default, if that path is now missing — the app
+    never fails to boot for a missing folder.
+  - **Switching** (`open_workspace`): canonicalize → create `.sabi/` + init
+    its catalog if new → `seed_from_disk` → register the asset-protocol scope
+    → only then commit to the registry and swap `AppState.workspace`, so a
+    failure at any step leaves the previously active workspace untouched.
+  - A workspace's display name is always its **live folder basename** —
+    never stored, so it can't drift out of sync with a rename on disk.
+  - **Known limitation**: a workspace that isn't active stops being polled
+    client-side (see Polling below) — its pending jobs resume advancing once
+    it's reopened.
+- **`sabi.db` registry** — SQLite at `<app-data>/com.recraftory.sabi/sabi.db`
+  (`RegistryDb` in `registry.rs`), a single always-open connection distinct
+  from the active workspace's `WorkspaceDb`. Holds the `settings` table
+  (**global**, workspace-independent: API keys, `active_provider`,
+  `recraftory_endpoint`, `active_workspace_path`) and the `workspaces` table
+  (`path` PK, `last_opened_at`) backing the recents list. On upgrade from a
+  pre-workspace install, the old single-catalog `catalog.db` is renamed to
+  `sabi.db` in place (`lib.rs::registry_db_path`) — its `settings` carry over
+  untouched (no API key re-entry needed), but its old `images`/`generations`
+  rows are left in the file, unused (not migrated into any workspace).
+- **API key** — stored server-side in the registry's `settings` table per
+  provider under key `<provider_id>_api_key` (e.g. `google_api_key`), global
+  across every workspace. Written via `set_api_key` (empty string clears it);
+  the value never leaves the backend — the frontend only queries presence via
+  `has_api_key`. Generation reads the key from the registry:
+  `submit_queued`/`do_submit` and `refresh_generation` take both `&RegistryDb`
+  (for the key) and `&WorkspaceDb` (for the job).
+- **Image files** — saved in the active workspace's folder; generated images
+  named `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
   `convertFileSrc(path)` (Tauri asset protocol). The static
   `"$HOME/Pictures/sabi-images/**/*"` scope in `tauri.conf.json` is only the
-  default; the configured dir is registered at runtime via
-  `app.asset_protocol_scope().allow_directory(dir, true)` (in `lib.rs` setup and
-  on every `set_storage_dir`). Requires `protocol-asset` Cargo feature.
-  CSP must allow `asset:` and `http://asset.localhost` for `img-src`.
+  build-time default; each opened workspace's folder is registered at runtime
+  via `app.asset_protocol_scope().allow_directory(dir, true)` (scope is
+  additive — a previous workspace's folder is never de-registered). Requires
+  `protocol-asset` Cargo feature. CSP must allow `asset:` and
+  `http://asset.localhost` for `img-src`.
 - **Polling** — `create_prediction` returns immediately with a `pending` record.
-  Polling is **query-driven**: `assetsQuery` (`src/lib/queries.ts`) has a
-  `refetchInterval` that fires every 2s while any generation is `pending`, and its
-  `fetchAssets` advances each pending row one step by calling `refresh_generation`
-  (via `refreshGeneration(id)`). The interval stops once nothing is pending.
-  In-progress generations render as spinner placeholder tiles
-  (`routes/assets/PendingCard.tsx`); the `generate()` flow is non-blocking (fire,
-  close panel, free the button) — the finished image appears when polling
-  completes.
+  Polling is **query-driven and workspace-scoped**: `generationsQuery(wsPath)`
+  (`src/lib/queries.ts`, keyed by the active workspace's path) has a
+  `refetchInterval` that fires every 2s while any generation is `pending`, and
+  its `queryFn` (`pollAndDrain`) advances each pending row one step via
+  `refreshGeneration(id)` then drains the queue via `submitQueued`. The
+  interval stops once nothing is pending. In-progress generations render as
+  spinner placeholder tiles (`routes/assets/PendingCard.tsx`); the `generate()`
+  flow is non-blocking (fire, close panel, free the button) — the finished
+  image appears when polling completes.
 - **Upload normalization** — uploaded images are converted to PNG data URIs
   client-side (canvas re-encode) via `fileToDataUri()` in `routes/assets/helpers.ts`.
   Images are **saved to the DB and filesystem immediately on pick**
   (not deferred until generation), via `save_uploaded_image`.
 - **Path safety** — `delete_image` canonicalizes paths and rejects anything
-  outside the images directory.
+  outside the active workspace's folder.
 - **Rust deps**: `reqwest` (HTTP), `rusqlite` (SQLite), `serde`/`serde_json`,
   `uuid`, `dirs`, `tokio`, `base64`, `async-trait` (provider trait),
   `tauri-plugin-dialog` (folder picker).

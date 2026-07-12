@@ -8,7 +8,7 @@ import {
   type Generation,
   type ImageEntry,
 } from "../lib/tauri";
-import { generationsQuery, imagesQuery } from "../lib/queries";
+import { activeWorkspaceQuery, generationsQuery, imagesQuery } from "../lib/queries";
 import { Button, ImageViewer, useEscapeLayer } from "../root";
 import { Segmented } from "../components/Segmented";
 import { IconX, IconLoader2 } from "../lib/icons";
@@ -406,8 +406,10 @@ function GenerationDetail({
 export default function Generations({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { data: generations = [] } = useQuery(generationsQuery);
-  const { data: images = [] } = useQuery(imagesQuery);
+  const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
+  const wsPath = activeWorkspace?.path;
+  const { data: generations = [] } = useQuery(generationsQuery(wsPath));
+  const { data: images = [] } = useQuery(imagesQuery(wsPath));
 
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
@@ -448,7 +450,7 @@ export default function Generations({ onClose }: { onClose: () => void }) {
   const panelOpen = !!selectedGen;
 
   const refresh = () =>
-    qc.invalidateQueries({ queryKey: generationsQuery.queryKey });
+    qc.invalidateQueries({ queryKey: generationsQuery(wsPath).queryKey });
 
   async function onClearQueue() {
     if (busy || queuedCount === 0) return;

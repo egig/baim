@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { generationsQuery, isActive } from "./lib/queries";
+import { activeWorkspaceQuery, generationsQuery, isActive } from "./lib/queries";
 import Settings from "./routes/settings";
 import Generations from "./routes/generations";
 import { IconX, IconAlignBoxLeftStretch, IconSettings } from "./lib/icons";
@@ -331,8 +331,9 @@ function Titlebar({
 export default function Root() {
   // Observing the queue engine from the always-mounted shell keeps it polling
   // and draining regardless of dialog state; the count drives the titlebar badge.
+  const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
   const { data: activeCount = 0 } = useQuery({
-    ...generationsQuery,
+    ...generationsQuery(activeWorkspace?.path),
     select: (gens) => gens.filter(isActive).length,
   });
 

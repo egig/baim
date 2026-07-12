@@ -3,37 +3,27 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::generation::{default_storage_dir, Generation, ImageEntry};
-use crate::provider::DEFAULT_PROVIDER;
+use crate::generation::{Generation, ImageEntry};
 
-/// `settings` key under which the user-chosen storage directory is stored.
-const STORAGE_DIR_KEY: &str = "storage_dir";
-/// `settings` key under which the globally-selected image provider is stored.
-const ACTIVE_PROVIDER_KEY: &str = "active_provider";
-
-/// `settings` key holding a given provider's API key. Matches the historical
-/// per-provider naming (`<provider_id>_api_key`, e.g. `google_api_key`).
-fn api_key_setting_key(provider_id: &str) -> String {
-    format!("{}_api_key", provider_id)
-}
-
-pub struct Db {
+/// A single workspace's catalog: the `images` and `generations` for one
+/// user-chosen folder. Lives at `<root>/.sabi/catalog.db`. Global settings
+/// (API keys, active provider, the workspace registry itself) are NOT here —
+/// see `RegistryDb`.
+pub struct WorkspaceDb {
     conn: Mutex<Connection>,
-    /// The directory image files live in. Loaded from the `settings` table on
-    /// open (falling back to `default_storage_dir`) and cached here so image
-    /// operations don't hit the DB for it on every call.
-    storage_dir: Mutex<PathBuf>,
+    /// The workspace's own folder — where its image files live. Fixed at
+    /// construction; a different folder is a different `WorkspaceDb`.
+    root: PathBuf,
 }
 
-impl Db {
-    pub fn open(db_path: &Path) -> Result<Self, String> {
-        let conn = Connection::open(db_path)
+impl WorkspaceDb {
+    pub fn open(catalog_path: &Path, root: PathBuf) -> Result<Self, String> {
+        let conn = Connection::open(catalog_path)
             .map_err(|e| format!("Failed to open DB: {}", e))?;
         Self::init_tables(&conn)?;
-        let storage_dir = Self::read_storage_dir(&conn)?;
-        Ok(Db {
+        Ok(WorkspaceDb {
             conn: Mutex::new(conn),
-            storage_dir: Mutex::new(storage_dir),
+            root,
         })
     }
 
@@ -61,10 +51,6 @@ impl Db {
                 logs TEXT,
                 created_at INTEGER NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
             ",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
@@ -83,17 +69,11 @@ impl Db {
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
         let _ = conn.execute("ALTER TABLE generations ADD COLUMN logs TEXT", []);
 
-        // The Replicate provider was removed. Databases from before that keep
-        // finished rows' provider as-is (historical record), but anything that
-        // would still be dispatched to it must be moved off: the global
-        // selection falls back to google, and unfinished replicate jobs are
-        // failed (their poll URLs point at a backend we can no longer talk to).
-        conn.execute(
-            "UPDATE settings SET value = 'google'
-             WHERE key = ?1 AND value = 'replicate'",
-            params![ACTIVE_PROVIDER_KEY],
-        )
-        .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
+        // The Replicate provider was removed. Unfinished replicate jobs are
+        // failed (their poll URLs point at a backend we can no longer talk to);
+        // finished rows keep `provider = 'replicate'` as history. Relevant for
+        // workspaces seeded from legacy `generations/*.json` sidecars, which can
+        // still carry this old value.
         conn.execute(
             "UPDATE generations SET status = 'failed', error = 'Replicate provider was removed'
              WHERE provider = 'replicate' AND status IN ('queued', 'pending')",
@@ -102,30 +82,12 @@ impl Db {
         .map_err(|e| format!("Failed to fail orphaned replicate generations: {}", e))?;
 
         // The "cloud" provider was renamed to "recraftory" (same backend, new
-        // name). Rewrite existing databases so saved selections, keys, and
-        // generation history follow the rename rather than silently falling
-        // back to the default provider.
-        conn.execute(
-            "UPDATE settings SET value = 'recraftory'
-             WHERE key = ?1 AND value = 'cloud'",
-            params![ACTIVE_PROVIDER_KEY],
-        )
-        .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
+        // name). Same rationale as above — legacy sidecar imports can carry it.
         conn.execute(
             "UPDATE generations SET provider = 'recraftory' WHERE provider = 'cloud'",
             [],
         )
         .map_err(|e| format!("Failed to migrate cloud generations: {}", e))?;
-        conn.execute(
-            "UPDATE settings SET key = 'recraftory_api_key' WHERE key = 'cloud_api_key'",
-            [],
-        )
-        .map_err(|e| format!("Failed to migrate cloud api key setting: {}", e))?;
-        conn.execute(
-            "UPDATE settings SET key = 'recraftory_endpoint' WHERE key = 'cloud_endpoint'",
-            [],
-        )
-        .map_err(|e| format!("Failed to migrate cloud endpoint setting: {}", e))?;
 
         // Index on the source link, created after the column is guaranteed to exist.
         conn.execute(
@@ -168,135 +130,9 @@ impl Db {
         Ok(())
     }
 
-    fn read_storage_dir(conn: &Connection) -> Result<PathBuf, String> {
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                params![STORAGE_DIR_KEY],
-                |row| row.get(0),
-            )
-            .ok();
-        match stored {
-            Some(s) if !s.is_empty() => Ok(PathBuf::from(s)),
-            _ => default_storage_dir(),
-        }
-    }
-
-    /// The currently configured storage directory.
+    /// The folder this workspace's image files live in.
     pub fn storage_dir(&self) -> PathBuf {
-        self.storage_dir
-            .lock()
-            .expect("storage_dir mutex poisoned")
-            .clone()
-    }
-
-    /// Persist and cache a new storage directory. The path is expected to be
-    /// already created and canonicalized by the caller.
-    pub fn set_storage_dir(&self, dir: &Path) -> Result<(), String> {
-        {
-            let conn = self.conn.lock().map_err(|e| e.to_string())?;
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![STORAGE_DIR_KEY, dir.to_string_lossy().to_string()],
-            )
-            .map_err(|e| format!("Failed to save storage directory: {}", e))?;
-        }
-        let mut guard = self.storage_dir.lock().map_err(|e| e.to_string())?;
-        *guard = dir.to_path_buf();
-        Ok(())
-    }
-
-    /// The globally-selected image provider id, falling back to the default when
-    /// unset (fresh installs / pre-provider databases).
-    pub fn read_active_provider(&self) -> String {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return DEFAULT_PROVIDER.to_string(),
-        };
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                params![ACTIVE_PROVIDER_KEY],
-                |row| row.get(0),
-            )
-            .ok();
-        match stored {
-            Some(s) if !s.is_empty() => s,
-            _ => DEFAULT_PROVIDER.to_string(),
-        }
-    }
-
-    /// Persist the globally-selected image provider id.
-    pub fn set_active_provider(&self, id: &str) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![ACTIVE_PROVIDER_KEY, id],
-        )
-        .map_err(|e| format!("Failed to save active provider: {}", e))?;
-        Ok(())
-    }
-
-    /// The stored API key for a provider, if one has been saved and is
-    /// non-empty. Returned to the settings UI and read on every generation.
-    pub fn read_api_key(&self, provider_id: &str) -> Option<String> {
-        let conn = self.conn.lock().ok()?;
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                params![api_key_setting_key(provider_id)],
-                |row| row.get(0),
-            )
-            .ok();
-        stored.filter(|s| !s.is_empty())
-    }
-
-    /// Read a raw setting value from the settings table.
-    pub fn read_setting(&self, key: &str) -> Option<String> {
-        let conn = self.conn.lock().ok()?;
-        let stored: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                params![key],
-                |row| row.get(0),
-            )
-            .ok();
-        stored.filter(|s| !s.is_empty())
-    }
-
-    /// Persist a raw setting to the settings table.
-    pub fn write_setting(&self, key: &str, value: &str) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )
-        .map_err(|e| format!("Failed to write setting: {}", e))?;
-        Ok(())
-    }
-
-    /// Persist a provider's API key. An empty/whitespace-only key clears it.
-    pub fn set_api_key(&self, provider_id: &str, key: &str) -> Result<(), String> {
-        let key = key.trim();
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        if key.is_empty() {
-            conn.execute(
-                "DELETE FROM settings WHERE key = ?1",
-                params![api_key_setting_key(provider_id)],
-            )
-            .map_err(|e| format!("Failed to clear API key: {}", e))?;
-        } else {
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![api_key_setting_key(provider_id), key],
-            )
-            .map_err(|e| format!("Failed to save API key: {}", e))?;
-        }
-        Ok(())
+        self.root.clone()
     }
 
     pub fn insert_image(&self, entry: &ImageEntry) -> Result<(), String> {
@@ -519,11 +355,11 @@ impl Db {
     }
 
     /// One-time seed from existing files on disk. Uses INSERT OR IGNORE so it's
-    /// idempotent — safe to run on every startup.
+    /// idempotent — safe to run every time this workspace is opened.
     pub fn seed_from_disk(&self) -> Result<(), String> {
         let images_dir = self.storage_dir();
 
-        // Seed generations from existing JSON sidecars
+        // Seed generations from existing JSON sidecars (legacy format).
         let generations_dir = images_dir.join("generations");
         if generations_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&generations_dir) {

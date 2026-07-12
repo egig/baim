@@ -11,4 +11,6 @@ export {
   IconAlertTriangle,
   IconLayoutGrid,
   IconList,
+  IconChevronDown,
+  IconFolder,
 } from "@tabler/icons-react";

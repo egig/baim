@@ -1,32 +1,32 @@
-use tauri::Manager;
-
-use crate::db::Db;
 use crate::generation;
 use crate::generation::{Generation, ImageEntry};
 use crate::provider::{self, ProviderInfo};
+use crate::workspace::{self, active_workspace, AppState, WorkspaceInfo};
 
 /// Enqueue a single generation (status `queued`) referencing its source image by
 /// id. The queue drainer (`submit_queued`) submits it to the provider later.
 #[tauri::command]
 pub fn create_prediction(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     prompt: String,
     provider: String,
     source_id: Option<String>,
 ) -> Result<Generation, String> {
-    generation::create_prediction(&*state, &prompt, &provider, source_id.as_deref())
+    let ws = active_workspace(&state)?;
+    generation::create_prediction(&ws.db, &prompt, &provider, source_id.as_deref())
 }
 
 /// Enqueue one generation per prompt, sharing one source image and provider.
 /// Powers batch (template / bulk) generation.
 #[tauri::command]
 pub fn create_predictions(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     prompts: Vec<String>,
     provider: String,
     source_id: Option<String>,
 ) -> Result<Vec<Generation>, String> {
-    generation::create_predictions(&*state, &prompts, &provider, source_id.as_deref())
+    let ws = active_workspace(&state)?;
+    generation::create_predictions(&ws.db, &prompts, &provider, source_id.as_deref())
 }
 
 /// Drain the queue: submit up to `limit` of the oldest `queued` jobs to their
@@ -34,50 +34,54 @@ pub fn create_predictions(
 /// of free in-flight slots so concurrency stays capped.
 #[tauri::command]
 pub async fn submit_queued(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<Generation>, String> {
-    generation::submit_queued(&*state, limit).await
+    let ws = active_workspace(&state)?;
+    generation::submit_queued(&state.registry, &ws.db, limit).await
 }
 
 /// Drop every `queued` job ("Clear queue"). In-flight jobs finish.
 #[tauri::command]
-pub fn clear_queue(state: tauri::State<'_, Db>) -> Result<(), String> {
-    generation::clear_queue(&*state)
+pub fn clear_queue(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let ws = active_workspace(&state)?;
+    generation::clear_queue(&ws.db)
 }
 
 /// Re-enqueue an existing generation (Retry) as a fresh `queued` job.
 #[tauri::command]
 pub fn requeue_generation(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Generation, String> {
-    generation::requeue_generation(&*state, &id)
+    let ws = active_workspace(&state)?;
+    generation::requeue_generation(&ws.db, &id)
 }
 
 #[tauri::command]
 pub async fn refresh_generation(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Generation, String> {
-    generation::refresh_generation(&*state, &id).await
+    let ws = active_workspace(&state)?;
+    generation::refresh_generation(&state.registry, &ws.db, &id).await
 }
 
 /// Whether the given provider has an API key saved (the value is never returned
 /// to the frontend; only its presence).
 #[tauri::command]
-pub fn has_api_key(state: tauri::State<'_, Db>, provider: String) -> bool {
-    state.read_api_key(&provider).is_some()
+pub fn has_api_key(state: tauri::State<'_, AppState>, provider: String) -> bool {
+    state.registry.read_api_key(&provider).is_some()
 }
 
 /// Persist (or, with an empty string, clear) a provider's API key.
 #[tauri::command]
 pub fn set_api_key(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     provider: String,
     key: String,
 ) -> Result<(), String> {
-    state.set_api_key(&provider, &key)
+    state.registry.set_api_key(&provider, &key)
 }
 
 /// The image providers the app knows about, for the settings dropdown and
@@ -89,91 +93,111 @@ pub fn list_providers() -> Vec<ProviderInfo> {
 
 /// The globally-selected provider id.
 #[tauri::command]
-pub fn get_active_provider(state: tauri::State<'_, Db>) -> String {
-    state.read_active_provider()
+pub fn get_active_provider(state: tauri::State<'_, AppState>) -> String {
+    state.registry.read_active_provider()
 }
 
 /// Persist the globally-selected provider id.
 #[tauri::command]
-pub fn set_active_provider(state: tauri::State<'_, Db>, id: String) -> Result<(), String> {
-    state.set_active_provider(&id)
+pub fn set_active_provider(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    state.registry.set_active_provider(&id)
 }
 
 #[tauri::command]
-pub fn get_images(state: tauri::State<'_, Db>) -> Result<Vec<ImageEntry>, String> {
-    generation::list_saved_images(&*state)
+pub fn get_images(state: tauri::State<'_, AppState>) -> Result<Vec<ImageEntry>, String> {
+    let ws = active_workspace(&state)?;
+    generation::list_saved_images(&ws.db)
 }
 
 #[tauri::command]
-pub fn get_generations(state: tauri::State<'_, Db>) -> Result<Vec<Generation>, String> {
-    generation::list_generations(&*state)
+pub fn get_generations(state: tauri::State<'_, AppState>) -> Result<Vec<Generation>, String> {
+    let ws = active_workspace(&state)?;
+    generation::list_generations(&ws.db)
 }
 
 // `async` so the file + SQLite work runs on Tauri's async runtime rather than
 // the main thread, where it would block the webview UI until it completes.
 #[tauri::command]
-pub async fn delete_image(state: tauri::State<'_, Db>, path: String) -> Result<(), String> {
-    generation::delete_image(&*state, &path)
+pub async fn delete_image(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    let ws = active_workspace(&state)?;
+    generation::delete_image(&ws.db, &path)
 }
 
 // `async` for the same reason: base64-decoding and writing the upload to disk
 // must not block the main (UI) thread.
 #[tauri::command]
 pub async fn save_uploaded_image(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     data_uri: String,
     title: Option<String>,
 ) -> Result<ImageEntry, String> {
-    generation::save_uploaded_image(&*state, &data_uri, title.as_deref())
+    let ws = active_workspace(&state)?;
+    generation::save_uploaded_image(&ws.db, &data_uri, title.as_deref())
 }
 
 /// The configured Recraftory backend endpoint URL.
 #[tauri::command]
-pub fn get_recraftory_endpoint(state: tauri::State<'_, Db>) -> Option<String> {
-    state.read_setting("recraftory_endpoint")
+pub fn get_recraftory_endpoint(state: tauri::State<'_, AppState>) -> Option<String> {
+    state.registry.read_setting("recraftory_endpoint")
 }
 
 /// Persist the Recraftory backend endpoint URL and update the RecraftoryProvider config.
 #[tauri::command]
 pub fn set_recraftory_endpoint(
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     endpoint: String,
 ) -> Result<(), String> {
     let endpoint = endpoint.trim().to_string();
     if endpoint.is_empty() {
         return Ok(());
     }
-    state.write_setting("recraftory_endpoint", &endpoint)?;
+    state
+        .registry
+        .write_setting("recraftory_endpoint", &endpoint)?;
     crate::providers::recraftory::set_recraftory_endpoint(endpoint);
     Ok(())
 }
 
 /// The remaining credit balance on the configured Recraftory API key.
 #[tauri::command]
-pub async fn get_recraftory_credit_balance(state: tauri::State<'_, Db>) -> Result<i64, String> {
+pub async fn get_recraftory_credit_balance(
+    state: tauri::State<'_, AppState>,
+) -> Result<i64, String> {
     let api_key = state
+        .registry
         .read_api_key("recraftory")
         .ok_or_else(|| "No Recraftory API key configured".to_string())?;
     crate::providers::recraftory::get_credit_balance(&api_key).await
 }
 
+/// Known workspaces, most-recently-opened first.
 #[tauri::command]
-pub fn get_storage_dir(state: tauri::State<'_, Db>) -> String {
-    generation::get_storage_dir(&*state)
+pub fn list_workspaces(state: tauri::State<'_, AppState>) -> Result<Vec<WorkspaceInfo>, String> {
+    workspace::list_workspaces_info(&state)
 }
 
+/// The currently active workspace.
 #[tauri::command]
-pub fn set_storage_dir(
+pub fn get_active_workspace(state: tauri::State<'_, AppState>) -> Result<WorkspaceInfo, String> {
+    workspace::get_active_workspace_info(&state)
+}
+
+/// Open (or switch to) a workspace folder, creating its catalog if this is the
+/// first time it's been opened. `async` since it does blocking filesystem and
+/// SQLite work (folder creation, DB init, disk seeding) that shouldn't block
+/// the UI thread.
+#[tauri::command]
+pub async fn open_workspace(
     app: tauri::AppHandle,
-    state: tauri::State<'_, Db>,
+    state: tauri::State<'_, AppState>,
     path: String,
-) -> Result<String, String> {
-    let dir = generation::set_storage_dir(&*state, &path)?;
-    // Let the asset protocol serve images from the new directory.
-    app.asset_protocol_scope()
-        .allow_directory(std::path::Path::new(&dir), true)
-        .map_err(|e| format!("Failed to allow storage directory: {}", e))?;
-    // Pick up any files already present in the chosen directory.
-    state.seed_from_disk()?;
-    Ok(dir)
+) -> Result<WorkspaceInfo, String> {
+    workspace::open_workspace(&app, &state, &path)
+}
+
+/// Remove a workspace from the recents list. Does not touch any files, and
+/// refuses nothing about the currently active workspace continuing to run.
+#[tauri::command]
+pub fn forget_workspace(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    state.registry.forget_workspace(&path)
 }

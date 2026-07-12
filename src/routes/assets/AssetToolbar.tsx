@@ -3,11 +3,14 @@ import { Button } from "../../root";
 import { IconLayoutGrid, IconList, IconUpload } from "../../lib/icons";
 import { SORT_OPTIONS } from "./helpers";
 import type { AssetFilter, AssetView } from "./types";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import type { WorkspaceInfo } from "../../lib/tauri";
 
-/** Top toolbar for the asset library: origin filter, search, sort, grid/list
- *  toggle, bulk-select mode, and upload. Purely controlled — all state lives in
- *  the parent route. */
+/** Top toolbar for the asset library: workspace switcher, origin filter,
+ *  search, sort, grid/list toggle, bulk-select mode, and upload. Purely
+ *  controlled — all state lives in the parent route. */
 export function AssetToolbar({
+  activeWorkspace,
   visibleCount,
   filter,
   onFilterChange,
@@ -22,6 +25,7 @@ export function AssetToolbar({
   onToggleSelectMode,
   onUploadClick,
 }: {
+  activeWorkspace: WorkspaceInfo | undefined;
   visibleCount: number;
   filter: AssetFilter;
   onFilterChange: (v: AssetFilter) => void;
@@ -51,9 +55,13 @@ export function AssetToolbar({
         overflowX: "auto",
       }}
     >
-      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)", flexShrink: 0 }}>
-        Daftar Gambar
-      </div>
+      {activeWorkspace ? (
+        <WorkspaceSwitcher activeWorkspace={activeWorkspace} />
+      ) : (
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)", flexShrink: 0 }}>
+          Daftar Gambar
+        </div>
+      )}
       <span
         style={{
           minWidth: 18,

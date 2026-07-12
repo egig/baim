@@ -154,10 +154,31 @@ export async function setRecraftoryEndpoint(endpoint: string): Promise<void> {
   return invoke<void>("set_recraftory_endpoint", { endpoint });
 }
 
-export async function getStorageDir(): Promise<string> {
-  return invoke<string>("get_storage_dir");
+/** A user-picked folder holding its own images/generations catalog. Display
+ *  `name` is always the live folder basename, never a stored/editable name. */
+export interface WorkspaceInfo {
+  path: string;
+  name: string;
+  last_opened_at: number;
 }
 
-export async function setStorageDir(path: string): Promise<string> {
-  return invoke<string>("set_storage_dir", { path });
+/** Known workspaces, most-recently-opened first. */
+export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
+  return invoke<WorkspaceInfo[]>("list_workspaces");
+}
+
+/** The currently active workspace. */
+export async function getActiveWorkspace(): Promise<WorkspaceInfo> {
+  return invoke<WorkspaceInfo>("get_active_workspace");
+}
+
+/** Open (or switch to) a workspace folder, creating its catalog the first
+ *  time it's opened. */
+export async function openWorkspace(path: string): Promise<WorkspaceInfo> {
+  return invoke<WorkspaceInfo>("open_workspace", { path });
+}
+
+/** Remove a workspace from the recents list. Does not touch any files. */
+export async function forgetWorkspace(path: string): Promise<void> {
+  return invoke<void>("forget_workspace", { path });
 }

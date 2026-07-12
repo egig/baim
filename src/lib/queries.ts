@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   getImages,
   getGenerations,
+  getActiveWorkspace,
   refreshGeneration,
   submitQueued,
   type ImageEntry,
@@ -20,29 +21,51 @@ export function isActive(g: Generation): boolean {
   return g.status === "queued" || g.status === "pending";
 }
 
-/** The saved image library. Split from generations so the queue engine can poll
- *  on its own cadence without re-fetching images every 2s. */
-export const imagesQuery = queryOptions({
-  queryKey: ["images"] as const,
-  queryFn: getImages,
-  staleTime: 30_000,
+/** The active workspace. Only changes via an explicit `setQueryData` right
+ *  after `open_workspace` succeeds (see the switcher), so this never refetches
+ *  on its own. */
+export const activeWorkspaceQuery = queryOptions({
+  queryKey: ["activeWorkspace"] as const,
+  queryFn: getActiveWorkspace,
+  staleTime: Infinity,
 });
 
-/** The queue engine. One `queryFn` owns the whole state machine:
+/** The saved image library, scoped to a workspace. Split from generations so
+ *  the queue engine can poll on its own cadence without re-fetching images
+ *  every 2s. Keying by workspace path is what makes switching workspaces safe
+ *  — a different path is simply a different, independently-fetched cache
+ *  entry, so nothing from the previous workspace can leak through. `enabled`
+ *  is false until the active workspace is known, so components that mount
+ *  before then don't error. */
+export function imagesQuery(workspacePath: string | undefined) {
+  return queryOptions({
+    queryKey: ["images", workspacePath ?? null] as const,
+    queryFn: getImages,
+    enabled: workspacePath != null,
+    staleTime: 30_000,
+  });
+}
+
+/** The queue engine, scoped to a workspace. One `queryFn` owns the whole state
+ *  machine:
  *   1. poll every `pending` row one step (`refresh_generation`), and
  *   2. if in-flight < K and any `queued` remain, submit the free slots
  *      (`submit_queued`) to promote them to `pending`.
  *
  *  It self-polls every 2s while any job is `queued` or `pending`, and stops once
  *  everything settles. Because the always-mounted shell (sidebar badge) observes
- *  this query, the engine keeps draining on every route. */
-export const generationsQuery = queryOptions({
-  queryKey: ["generations"] as const,
-  queryFn: pollAndDrain,
-  staleTime: 30_000,
-  refetchInterval: (query) =>
-    query.state.data?.some(isActive) ? 2000 : false,
-});
+ *  this query, the engine keeps draining on every route. A workspace that isn't
+ *  active stops being polled — its jobs resume advancing once it's reopened. */
+export function generationsQuery(workspacePath: string | undefined) {
+  return queryOptions({
+    queryKey: ["generations", workspacePath ?? null] as const,
+    queryFn: pollAndDrain,
+    enabled: workspacePath != null,
+    staleTime: 30_000,
+    refetchInterval: (query) =>
+      query.state.data?.some(isActive) ? 2000 : false,
+  });
+}
 
 async function pollAndDrain(): Promise<Generation[]> {
   let generations = await getGenerations();

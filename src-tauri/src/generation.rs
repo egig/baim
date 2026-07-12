@@ -1,16 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::db::Db;
+use crate::db::WorkspaceDb;
 use crate::provider::{
     get_provider, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
 };
+use crate::registry::RegistryDb;
 
 /// Enqueue a single generation. Inserts a `queued` row referencing its source
 /// image by `source_id` (no inline image data — the bytes are read from disk at
 /// submit time). The queue drainer (`submit_queued`) later submits it to the
 /// provider. Returns the persisted record.
 pub fn create_prediction(
-    db: &Db,
+    db: &WorkspaceDb,
     prompt: &str,
     provider_id: &str,
     source_id: Option<&str>,
@@ -24,7 +25,7 @@ pub fn create_prediction(
 /// Each becomes its own `queued` row, drained later by `submit_queued`. Returns
 /// every record in prompt order.
 pub fn create_predictions(
-    db: &Db,
+    db: &WorkspaceDb,
     prompts: &[String],
     provider_id: &str,
     source_id: Option<&str>,
@@ -41,7 +42,7 @@ pub fn create_predictions(
 
 /// Re-enqueue an existing generation (typically a `failed` one) as a fresh
 /// `queued` row cloning its source, prompt and provider. Powers per-row Retry.
-pub fn requeue_generation(db: &Db, id: &str) -> Result<Generation, String> {
+pub fn requeue_generation(db: &WorkspaceDb, id: &str) -> Result<Generation, String> {
     let existing = db.load_generation(id).ok_or("Generation not found")?;
     create_prediction(
         db,
@@ -53,7 +54,7 @@ pub fn requeue_generation(db: &Db, id: &str) -> Result<Generation, String> {
 
 /// Drop every `queued` generation (the "Clear queue" action). Already-submitted
 /// (`pending`) jobs are left to finish.
-pub fn clear_queue(db: &Db) -> Result<(), String> {
+pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
     db.clear_queued()
 }
 
@@ -62,14 +63,18 @@ pub fn clear_queue(db: &Db) -> Result<(), String> {
 /// frontend with `limit = K - in_flight`, so in-flight jobs never exceed K.
 /// Failures (bad key, missing source, provider error) mark that row `failed`
 /// without aborting the rest. Returns the advanced records.
-pub async fn submit_queued(db: &Db, limit: usize) -> Result<Vec<Generation>, String> {
+pub async fn submit_queued(
+    registry: &RegistryDb,
+    db: &WorkspaceDb,
+    limit: usize,
+) -> Result<Vec<Generation>, String> {
     if limit == 0 {
         return Ok(Vec::new());
     }
     let queued = db.list_queued(limit)?;
     let mut out = Vec::with_capacity(queued.len());
     for mut record in queued {
-        submit_one(db, &mut record).await;
+        submit_one(registry, db, &mut record).await;
         out.push(record);
     }
     Ok(out)
@@ -78,8 +83,8 @@ pub async fn submit_queued(db: &Db, limit: usize) -> Result<Vec<Generation>, Str
 /// Submit one queued row, always persisting the outcome. On any error the row is
 /// stored as `failed` (with the message) rather than propagating, so one bad job
 /// can't abort a drain pass.
-async fn submit_one(db: &Db, record: &mut Generation) {
-    if let Err(err) = do_submit(db, record).await {
+async fn submit_one(registry: &RegistryDb, db: &WorkspaceDb, record: &mut Generation) {
+    if let Err(err) = do_submit(registry, db, record).await {
         record.status = "failed".to_string();
         record.error = Some(err);
         record.poll_url = None;
@@ -87,17 +92,21 @@ async fn submit_one(db: &Db, record: &mut Generation) {
     }
 }
 
-async fn do_submit(db: &Db, record: &mut Generation) -> Result<(), String> {
+async fn do_submit(
+    registry: &RegistryDb,
+    db: &WorkspaceDb,
+    record: &mut Generation,
+) -> Result<(), String> {
     let provider = get_provider(&record.provider)
         .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
 
-    let api_key = db
+    let api_key = registry
         .read_api_key(&record.provider)
         .ok_or_else(|| format!("No API key set for {}", record.provider))?;
 
     // Meta-providers (recraftory) need the downstream provider's API key too.
     let provider_api_key = if record.provider == "recraftory" {
-        db.read_api_key("google")
+        registry.read_api_key("google")
     } else {
         None
     };
@@ -159,7 +168,11 @@ fn read_image_as_data_uri(path: &str) -> Result<String, String> {
 /// Poll a stored `pending` generation once and advance it if the provider has
 /// reached a terminal state. Downloads and saves the image on success. Records
 /// that are already terminal are returned unchanged.
-pub async fn refresh_generation(db: &Db, id: &str) -> Result<Generation, String> {
+pub async fn refresh_generation(
+    registry: &RegistryDb,
+    db: &WorkspaceDb,
+    id: &str,
+) -> Result<Generation, String> {
     let mut record = db.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
@@ -169,7 +182,7 @@ pub async fn refresh_generation(db: &Db, id: &str) -> Result<Generation, String>
     let provider = get_provider(&record.provider)
         .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
 
-    let api_key = db
+    let api_key = registry
         .read_api_key(&record.provider)
         .ok_or_else(|| format!("No API key set for {}", record.provider))?;
 
@@ -215,7 +228,7 @@ pub async fn refresh_generation(db: &Db, id: &str) -> Result<Generation, String>
 /// generation `succeeded`, and insert the matching image row. Shared by the
 /// synchronous create path and the async poll path.
 fn save_generated_image(
-    db: &Db,
+    db: &WorkspaceDb,
     record: &mut Generation,
     bytes: &[u8],
     ext: &str,
@@ -259,31 +272,11 @@ pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
     Ok(home.join("Pictures").join("sabi-images"))
 }
 
-/// Return the currently configured storage directory as a string.
-pub fn get_storage_dir(db: &Db) -> String {
-    db.storage_dir().to_string_lossy().to_string()
-}
-
-/// Persist a new storage directory. Creates it if missing and canonicalizes so
-/// later path-safety checks in `delete_image` line up. Returns the resolved
-/// absolute path. Registering it with the asset protocol scope is the caller's
-/// job (see `commands::set_storage_dir`), since that needs the `AppHandle`.
-pub fn set_storage_dir(db: &Db, dir: &str) -> Result<String, String> {
-    let path = std::path::PathBuf::from(dir);
-    std::fs::create_dir_all(&path)
-        .map_err(|e| format!("Failed to create storage directory: {}", e))?;
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| format!("Invalid storage directory: {}", e))?;
-    db.set_storage_dir(&canonical)?;
-    Ok(canonical.to_string_lossy().to_string())
-}
-
 /// Delete a saved image file and its associated generation record.
 /// The path is canonicalized and required to sit directly inside the images
 /// directory, so a path coming back from the frontend can't remove sidecar
 /// records or escape the directory via `..`/symlinks.
-pub fn delete_image(db: &Db, path: &str) -> Result<(), String> {
+pub fn delete_image(db: &WorkspaceDb, path: &str) -> Result<(), String> {
     let canonical_dir = db
         .storage_dir()
         .canonicalize()
@@ -309,11 +302,11 @@ pub fn delete_image(db: &Db, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn list_saved_images(db: &Db) -> Result<Vec<ImageEntry>, String> {
+pub fn list_saved_images(db: &WorkspaceDb) -> Result<Vec<ImageEntry>, String> {
     db.list_images()
 }
 
-pub fn list_generations(db: &Db) -> Result<Vec<Generation>, String> {
+pub fn list_generations(db: &WorkspaceDb) -> Result<Vec<Generation>, String> {
     db.list_generations()
 }
 
@@ -322,7 +315,7 @@ pub fn list_generations(db: &Db) -> Result<Vec<Generation>, String> {
 /// frontend can select it immediately. `title` is the original picked file name,
 /// kept for search/display since the on-disk name is a collision-free uuid.
 pub fn save_uploaded_image(
-    db: &Db,
+    db: &WorkspaceDb,
     data_uri: &str,
     title: Option<&str>,
 ) -> Result<ImageEntry, String> {
@@ -375,7 +368,7 @@ pub struct ImageEntry {
     pub path: String,
     /// Stable uuid identifying this image independently of its file path. Used as
     /// the target of a generation's `source_id` so children can be listed per
-    /// source. Backfilled for pre-existing rows (see `Db::backfill_image_ids`).
+    /// source. Backfilled for pre-existing rows (see `WorkspaceDb::backfill_image_ids`).
     #[serde(default)]
     pub id: String,
     pub filename: String,

@@ -18,6 +18,7 @@ import {
   type ImageEntry,
 } from "../../lib/tauri";
 import {
+  activeWorkspaceQuery,
   imagesQuery,
   generationsQuery,
   deriveGenerations,
@@ -36,9 +37,10 @@ import { SORT_OPTIONS } from "./helpers";
 /** Prefetch the asset library into the query cache so navigation to "/" is
  *  gated on the first load only; repeat visits render instantly from cache. */
 export const loader = (qc: QueryClient) => async () => {
+  const ws = await qc.ensureQueryData(activeWorkspaceQuery);
   await Promise.all([
-    qc.ensureQueryData(imagesQuery),
-    qc.ensureQueryData(generationsQuery),
+    qc.ensureQueryData(imagesQuery(ws.path)),
+    qc.ensureQueryData(generationsQuery(ws.path)),
   ]);
   return null;
 };
@@ -49,8 +51,10 @@ export default function Assets() {
   const { openSettings } = useShell();
 
   const qc = useQueryClient();
-  const { data: images = [] } = useQuery(imagesQuery);
-  const { data: generations = [] } = useQuery(generationsQuery);
+  const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
+  const wsPath = activeWorkspace?.path;
+  const { data: images = [] } = useQuery(imagesQuery(wsPath));
+  const { data: generations = [] } = useQuery(generationsQuery(wsPath));
   const { gens, childrenBySource, pending } = useMemo(
     () => deriveGenerations(generations),
     [generations]
@@ -151,10 +155,10 @@ export default function Assets() {
   const refresh = useCallback(
     () =>
       Promise.all([
-        qc.invalidateQueries({ queryKey: imagesQuery.queryKey }),
-        qc.invalidateQueries({ queryKey: generationsQuery.queryKey }),
+        qc.invalidateQueries({ queryKey: imagesQuery(wsPath).queryKey }),
+        qc.invalidateQueries({ queryKey: generationsQuery(wsPath).queryKey }),
       ]),
-    [qc]
+    [qc, wsPath]
   );
 
   /** Optimistically drop just-enqueued generations into the cache so their
@@ -166,13 +170,14 @@ export default function Assets() {
    *  placeholders, and reconcile with the DB when the background refetch lands. */
   const enqueueGenerations = useCallback(
     (created: Generation[]) => {
-      qc.setQueryData<Generation[]>(generationsQuery.queryKey, (old) =>
-        old ? [...old, ...created] : created
+      qc.setQueryData<Generation[]>(
+        generationsQuery(wsPath).queryKey,
+        (old) => (old ? [...old, ...created] : created)
       );
-      void qc.invalidateQueries({ queryKey: generationsQuery.queryKey });
-      void qc.invalidateQueries({ queryKey: imagesQuery.queryKey });
+      void qc.invalidateQueries({ queryKey: generationsQuery(wsPath).queryKey });
+      void qc.invalidateQueries({ queryKey: imagesQuery(wsPath).queryKey });
     },
-    [qc]
+    [qc, wsPath]
   );
 
   const [dims, setDims] = useState<Record<string, Dims>>({});
@@ -244,9 +249,9 @@ export default function Assets() {
       (g) => g.output_path && !known.has(g.output_path)
     );
     if (hasUnknownOutput) {
-      qc.invalidateQueries({ queryKey: imagesQuery.queryKey });
+      qc.invalidateQueries({ queryKey: imagesQuery(wsPath).queryKey });
     }
-  }, [generations, images, qc]);
+  }, [generations, images, qc, wsPath]);
 
   // When the Generations page opens a finished variant, it navigates here with
   // the target path in router state; select it once, then clear the state so a
@@ -483,6 +488,7 @@ export default function Assets() {
       />
 
       <AssetToolbar
+        activeWorkspace={activeWorkspace}
         visibleCount={visibleImages.length}
         filter={filter}
         onFilterChange={setFilter}
