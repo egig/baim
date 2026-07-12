@@ -24,7 +24,6 @@ import {
   templatesQuery,
   deriveGenerations,
 } from "../../lib/queries";
-import { mergeTemplates } from "../../lib/templates";
 import { ImageViewer, useShell } from "../../root";
 import { ApiKeyBanner } from "./ApiKeyBanner";
 import { AssetGrid } from "./AssetGrid";
@@ -58,10 +57,6 @@ export default function Assets() {
   const { data: images = [] } = useQuery(imagesQuery(wsPath));
   const { data: generations = [] } = useQuery(generationsQuery(wsPath));
   const { data: savedTemplates = [] } = useQuery(templatesQuery);
-  const allTemplates = useMemo(
-    () => mergeTemplates(savedTemplates),
-    [savedTemplates]
-  );
   const { gens, childrenBySource, pending } = useMemo(
     () => deriveGenerations(generations),
     [generations]
@@ -376,7 +371,7 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const prompts = allTemplates
+      const prompts = savedTemplates
         .filter((t) => selectedTemplates.has(t.id))
         .map((t) => t.prompt);
       // One backend call enqueues one queued generation per template.
@@ -415,7 +410,7 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const prompts = allTemplates
+      const prompts = savedTemplates
         .filter((t) => selectedTemplates.has(t.id))
         .map((t) => t.prompt);
       const all: Generation[] = [];

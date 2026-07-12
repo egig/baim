@@ -3,23 +3,21 @@ import { IconPencil, IconPhoto, IconTrash, IconX } from "../../lib/icons";
 import type { PickerTemplate } from "../../lib/templates";
 
 /** One tile in `TemplatePicker`'s grid: an image (or placeholder), a name
- *  label, and — for saved (non-built-in) templates — hover-revealed rename
- *  and delete actions. Shared by the inline grid and the "More templates"
- *  overflow dialog so both render identically. */
+ *  label, and hover-revealed rename/delete actions. Shared by the inline
+ *  grid and the "More templates" overflow dialog so both render
+ *  identically. */
 export function TemplateTile({
   t,
   selected,
   onToggle,
-  editable,
   onRename,
   onDelete,
 }: {
   t: PickerTemplate;
   selected: boolean;
   onToggle: (id: string) => void;
-  editable: boolean;
-  onRename?: (id: string, name: string) => void;
-  onDelete?: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -28,7 +26,7 @@ export function TemplateTile({
   function commitRename() {
     const name = draftName.trim();
     setRenaming(false);
-    if (name && name !== t.name) onRename?.(t.id, name);
+    if (name && name !== t.name) onRename(t.id, name);
     else setDraftName(t.name);
   }
 
@@ -79,7 +77,7 @@ export function TemplateTile({
             }}
           />
         )}
-        {editable && hovered && (
+        {hovered && (
           <div
             style={{
               position: "absolute",
@@ -113,7 +111,7 @@ export function TemplateTile({
             <div
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete?.(t.id);
+                onDelete(t.id);
               }}
               title="Hapus templat"
               style={{

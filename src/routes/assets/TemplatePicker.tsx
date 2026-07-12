@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { templatesQuery } from "../../lib/queries";
-import { mergeTemplates } from "../../lib/templates";
+import { toPickerTemplates } from "../../lib/templates";
 import { deleteTemplate, renameTemplate } from "../../lib/tauri";
 import { Dialog } from "../../root";
 import { TemplateTile } from "./TemplateTile";
@@ -24,11 +24,9 @@ const sectionLabel: React.CSSProperties = {
  *  toggles its membership in `selected`. Shared by the single-asset detail
  *  panel and the bulk (multi-image) panel.
  *
- *  Self-fetches saved templates (`templatesQuery`) and merges them with the
- *  built-in catalog: saved templates render first under "Templat saya" (only
- *  ~1 row inline, with a "More templates" overflow dialog beyond that),
- *  built-ins render below under "Bawaan". Only saved tiles get hover
- *  rename/delete affordances. */
+ *  Self-fetches templates (`templatesQuery`, most-recently-created first —
+ *  includes the seeded starter templates as regular rows). Only ~1 row
+ *  renders inline, with a "More templates" overflow dialog beyond that. */
 export function TemplatePicker({
   selected,
   onToggle,
@@ -40,15 +38,13 @@ export function TemplatePicker({
 }) {
   const qc = useQueryClient();
   const { data: saved = [] } = useQuery(templatesQuery);
-  const all = useMemo(() => mergeTemplates(saved), [saved]);
-  const savedList = useMemo(() => all.filter((t) => !t.isBuiltIn), [all]);
-  const builtIns = useMemo(() => all.filter((t) => t.isBuiltIn), [all]);
+  const all = useMemo(() => toPickerTemplates(saved), [saved]);
 
   const wrapRef = useRef<HTMLDivElement>(null);
-  const width = useContainerWidth(wrapRef, 0, savedList.length);
+  const width = useContainerWidth(wrapRef, 0, all.length);
   const perRow = Math.max(1, Math.floor((width + GAP) / (TILE_WIDTH + GAP)));
-  const overflow = savedList.length > perRow;
-  const visibleSaved = savedList.slice(0, perRow);
+  const overflow = all.length > perRow;
+  const visible = all.slice(0, perRow);
   const [moreOpen, setMoreOpen] = useState(false);
 
   async function handleRename(id: string, name: string) {
@@ -74,55 +70,37 @@ export function TemplatePicker({
 
   return (
     <div ref={wrapRef} style={{ marginBottom }}>
-      {savedList.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={sectionLabel}>Templat saya</div>
-          <div style={grid}>
-            {visibleSaved.map((t) => (
-              <TemplateTile
-                key={t.id}
-                t={t}
-                selected={selected.has(t.id)}
-                onToggle={onToggle}
-                editable
-                onRename={handleRename}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-          {overflow && (
-            <button
-              type="button"
-              onClick={() => setMoreOpen(true)}
-              style={{
-                marginTop: 8,
-                background: "none",
-                border: "none",
-                padding: 0,
-                fontSize: 11.5,
-                fontWeight: 600,
-                color: "var(--indigo-600)",
-                cursor: "pointer",
-              }}
-            >
-              Lebih banyak templat ({savedList.length})
-            </button>
-          )}
-        </div>
-      )}
-
-      <div style={sectionLabel}>Bawaan</div>
+      <div style={sectionLabel}>Templat saya</div>
       <div style={grid}>
-        {builtIns.map((t) => (
+        {visible.map((t) => (
           <TemplateTile
             key={t.id}
             t={t}
             selected={selected.has(t.id)}
             onToggle={onToggle}
-            editable={false}
+            onRename={handleRename}
+            onDelete={handleDelete}
           />
         ))}
       </div>
+      {overflow && (
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          style={{
+            marginTop: 8,
+            background: "none",
+            border: "none",
+            padding: 0,
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: "var(--indigo-600)",
+            cursor: "pointer",
+          }}
+        >
+          Lebih banyak templat ({all.length})
+        </button>
+      )}
 
       {moreOpen && (
         <Dialog width="min(560px, 90vw)" height="min(520px, 80vh)" onClose={() => setMoreOpen(false)}>
@@ -148,13 +126,12 @@ export function TemplatePicker({
               alignContent: "flex-start",
             }}
           >
-            {savedList.map((t) => (
+            {all.map((t) => (
               <TemplateTile
                 key={t.id}
                 t={t}
                 selected={selected.has(t.id)}
                 onToggle={onToggle}
-                editable
                 onRename={handleRename}
                 onDelete={handleDelete}
               />

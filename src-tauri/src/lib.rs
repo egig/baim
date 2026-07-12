@@ -82,6 +82,8 @@ pub fn run() {
             app.asset_protocol_scope()
                 .allow_directory(&templates_dir, true)
                 .expect("Failed to allow templates directory");
+            templates::seed_builtin_templates(&registry, &templates_dir)
+                .expect("Failed to seed built-in templates");
 
             app.manage(AppState {
                 registry,

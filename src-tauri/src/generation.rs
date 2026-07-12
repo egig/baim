@@ -61,8 +61,13 @@ pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
 /// Drain the queue: promote up to `limit` of the oldest `queued` rows to
 /// `pending` by submitting them to their provider. Called each poll tick by the
 /// frontend with `limit = K - in_flight`, so in-flight jobs never exceed K.
-/// Failures (bad key, missing source, provider error) mark that row `failed`
-/// without aborting the rest. Returns the advanced records.
+/// Submissions are independent network calls (each provider `create` request
+/// is a separate HTTP round-trip), so they run concurrently via `join_all`
+/// rather than paying `limit` round-trips back to back — `db`/`registry` are
+/// only touched synchronously between `.await` points, never held across one,
+/// so interleaving them here is safe. Failures (bad key, missing source,
+/// provider error) mark that row `failed` without aborting the rest. Returns
+/// the advanced records.
 pub async fn submit_queued(
     registry: &RegistryDb,
     db: &WorkspaceDb,
@@ -72,11 +77,11 @@ pub async fn submit_queued(
         return Ok(Vec::new());
     }
     let queued = db.list_queued(limit)?;
-    let mut out = Vec::with_capacity(queued.len());
-    for mut record in queued {
+    let out = futures_util::future::join_all(queued.into_iter().map(|mut record| async move {
         submit_one(registry, db, &mut record).await;
-        out.push(record);
-    }
+        record
+    }))
+    .await;
     Ok(out)
 }
 
