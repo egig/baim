@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   listProviders,
   hasApiKey,
@@ -126,6 +127,7 @@ const styles = {
 };
 
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
+  const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [stored, setStored] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -153,6 +155,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
       setApiKey("");
       setStored(true);
       setSaved(true);
+      qc.invalidateQueries({ queryKey: ["hasApiKey", provider.id] });
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setError(String(e));
@@ -165,6 +168,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
       await saveApiKey(provider.id, "");
       setApiKey("");
       setStored(false);
+      qc.invalidateQueries({ queryKey: ["hasApiKey", provider.id] });
     } catch (e) {
       setError(String(e));
     }
