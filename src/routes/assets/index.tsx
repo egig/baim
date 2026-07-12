@@ -21,9 +21,10 @@ import {
   activeWorkspaceQuery,
   imagesQuery,
   generationsQuery,
+  templatesQuery,
   deriveGenerations,
 } from "../../lib/queries";
-import { GENERATION_TEMPLATES } from "../../lib/templates";
+import { mergeTemplates } from "../../lib/templates";
 import { ImageViewer, useShell } from "../../root";
 import { ApiKeyBanner } from "./ApiKeyBanner";
 import { AssetGrid } from "./AssetGrid";
@@ -41,6 +42,7 @@ export const loader = (qc: QueryClient) => async () => {
   await Promise.all([
     qc.ensureQueryData(imagesQuery(ws.path)),
     qc.ensureQueryData(generationsQuery(ws.path)),
+    qc.ensureQueryData(templatesQuery),
   ]);
   return null;
 };
@@ -55,6 +57,11 @@ export default function Assets() {
   const wsPath = activeWorkspace?.path;
   const { data: images = [] } = useQuery(imagesQuery(wsPath));
   const { data: generations = [] } = useQuery(generationsQuery(wsPath));
+  const { data: savedTemplates = [] } = useQuery(templatesQuery);
+  const allTemplates = useMemo(
+    () => mergeTemplates(savedTemplates),
+    [savedTemplates]
+  );
   const { gens, childrenBySource, pending } = useMemo(
     () => deriveGenerations(generations),
     [generations]
@@ -369,9 +376,9 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const prompts = GENERATION_TEMPLATES.filter((t) =>
-        selectedTemplates.has(t.id)
-      ).map((t) => t.prompt);
+      const prompts = allTemplates
+        .filter((t) => selectedTemplates.has(t.id))
+        .map((t) => t.prompt);
       // One backend call enqueues one queued generation per template.
       const gens = await createPredictions(
         prompts,
@@ -408,9 +415,9 @@ export default function Assets() {
     setGenerating(true);
     setError(null);
     try {
-      const prompts = GENERATION_TEMPLATES.filter((t) =>
-        selectedTemplates.has(t.id)
-      ).map((t) => t.prompt);
+      const prompts = allTemplates
+        .filter((t) => selectedTemplates.has(t.id))
+        .map((t) => t.prompt);
       const all: Generation[] = [];
       for (const path of selectedPaths) {
         const img = images.find((i) => i.path === path);

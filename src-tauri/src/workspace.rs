@@ -25,6 +25,10 @@ pub struct WorkspaceHandle {
 pub struct AppState {
     pub registry: RegistryDb,
     pub workspace: Mutex<Arc<WorkspaceHandle>>,
+    /// App-wide directory holding copied preview images for saved prompt
+    /// templates (`<app-data>/com.recraftory.sabi/templates/`), registered
+    /// with the asset protocol scope once at startup.
+    pub templates_dir: PathBuf,
 }
 
 #[derive(Serialize)]

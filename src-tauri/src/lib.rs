@@ -4,6 +4,7 @@ mod generation;
 mod provider;
 mod providers;
 mod registry;
+mod templates;
 mod workspace;
 
 use std::path::PathBuf;
@@ -70,9 +71,22 @@ pub fn run() {
             let handle = workspace::boot_workspace(app, &registry)
                 .expect("Failed to open a workspace");
 
+            // Template preview images live outside any workspace folder, so
+            // they need their own asset-protocol grant (see the per-workspace
+            // grant in workspace.rs::build_workspace_handle for the same idea).
+            let templates_dir = templates::templates_dir(
+                registry_path.parent().expect("registry path has no parent"),
+            );
+            std::fs::create_dir_all(&templates_dir)
+                .expect("Failed to create templates directory");
+            app.asset_protocol_scope()
+                .allow_directory(&templates_dir, true)
+                .expect("Failed to allow templates directory");
+
             app.manage(AppState {
                 registry,
                 workspace: Mutex::new(Arc::new(handle)),
+                templates_dir,
             });
 
             Ok(())
@@ -100,6 +114,10 @@ pub fn run() {
             commands::get_active_workspace,
             commands::open_workspace,
             commands::forget_workspace,
+            commands::list_templates,
+            commands::save_template,
+            commands::delete_template,
+            commands::rename_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

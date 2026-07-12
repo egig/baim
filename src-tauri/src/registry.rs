@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 use crate::provider::DEFAULT_PROVIDER;
 
@@ -20,6 +21,18 @@ fn api_key_setting_key(provider_id: &str) -> String {
 pub struct WorkspaceRow {
     pub path: String,
     pub last_opened_at: i64,
+}
+
+/// A user-saved prompt template: a name + reusable prompt text, with a
+/// preview image copied into app-wide storage (see `templates.rs`) so it
+/// survives its source workspace being moved/renamed/deleted.
+#[derive(Serialize)]
+pub struct TemplateRow {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub preview_path: String,
+    pub created_at: i64,
 }
 
 /// The app-wide registry (`sabi.db`): global settings (API keys, active
@@ -50,6 +63,13 @@ impl RegistryDb {
             CREATE TABLE IF NOT EXISTS workspaces (
                 path TEXT PRIMARY KEY,
                 last_opened_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                preview_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL
             );
             ",
         )
@@ -226,5 +246,69 @@ impl RegistryDb {
     /// Persist which workspace is currently active, for the next launch.
     pub fn set_active_workspace_path(&self, path: &str) -> Result<(), String> {
         self.write_setting(ACTIVE_WORKSPACE_PATH_KEY, path)
+    }
+
+    /// Save a new prompt template row.
+    pub fn insert_template(&self, row: &TemplateRow) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO templates (id, name, prompt, preview_path, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![row.id, row.name, row.prompt, row.preview_path, row.created_at],
+        )
+        .map_err(|e| format!("Failed to save template: {}", e))?;
+        Ok(())
+    }
+
+    /// User-saved templates, most-recently-created first.
+    pub fn list_templates(&self) -> Result<Vec<TemplateRow>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, prompt, preview_path, created_at
+                 FROM templates ORDER BY created_at DESC",
+            )
+            .map_err(|e| format!("Failed to prepare query: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(TemplateRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    prompt: row.get(2)?,
+                    preview_path: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query templates: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Delete a template row, returning its `preview_path` (if it existed) so
+    /// the caller can also remove the copied preview file.
+    pub fn delete_template(&self, id: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let preview_path: Option<String> = conn
+            .query_row(
+                "SELECT preview_path FROM templates WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok();
+        conn.execute("DELETE FROM templates WHERE id = ?1", params![id])
+            .map_err(|e| format!("Failed to delete template: {}", e))?;
+        Ok(preview_path)
+    }
+
+    /// Rename an existing template.
+    pub fn rename_template(&self, id: &str, name: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE templates SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        )
+        .map_err(|e| format!("Failed to rename template: {}", e))?;
+        Ok(())
     }
 }

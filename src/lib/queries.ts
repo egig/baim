@@ -5,8 +5,10 @@ import {
   getActiveWorkspace,
   refreshGeneration,
   submitQueued,
+  listTemplates,
   type ImageEntry,
   type Generation,
+  type Template,
 } from "./tauri";
 
 /** Max generations allowed in flight (`pending`) at once. The queue drainer
@@ -133,4 +135,13 @@ export function deriveGenerations(
   return { gens, childrenBySource, pending };
 }
 
-export type { ImageEntry, Generation };
+/** User-saved prompt templates. Unlike `imagesQuery`/`generationsQuery`, this
+ *  is global (not workspace-keyed) — templates are app-wide, not scoped to
+ *  whichever folder happens to be the active workspace. */
+export const templatesQuery = queryOptions({
+  queryKey: ["templates"] as const,
+  queryFn: listTemplates,
+  staleTime: 30_000,
+});
+
+export type { ImageEntry, Generation, Template };

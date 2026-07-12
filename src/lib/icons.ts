@@ -13,4 +13,6 @@ export {
   IconList,
   IconChevronDown,
   IconFolder,
+  IconPencil,
+  IconBookmarkPlus,
 } from "@tabler/icons-react";

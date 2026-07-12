@@ -1,3 +1,6 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
+import type { Template } from "./tauri";
+
 /** A predefined generation template the user can pick instead of typing a prompt
  *  by hand. Selecting one (or several) drives a batch of variants, each using the
  *  template's `prompt` verbatim. */
@@ -8,6 +11,33 @@ export interface GenerationTemplate {
    *  placeholder box in the UI. */
   imagePreview: string;
   prompt: string;
+}
+
+/** A template as rendered in `TemplatePicker`, whichever origin it came from.
+ *  `isBuiltIn` gates whether rename/delete affordances apply — built-ins ship
+ *  with the app and aren't user-editable. */
+export interface PickerTemplate {
+  id: string;
+  name: string;
+  imagePreview: string;
+  prompt: string;
+  isBuiltIn: boolean;
+}
+
+/** Combine user-saved templates with the built-in catalog into one list for
+ *  `TemplatePicker` to render and `index.tsx` to resolve selections against.
+ *  Saved templates come first (most-recently-created, per `templatesQuery`). */
+export function mergeTemplates(saved: Template[]): PickerTemplate[] {
+  return [
+    ...saved.map((t) => ({
+      id: t.id,
+      name: t.name,
+      imagePreview: convertFileSrc(t.preview_path),
+      prompt: t.prompt,
+      isBuiltIn: false,
+    })),
+    ...GENERATION_TEMPLATES.map((t) => ({ ...t, isBuiltIn: true })),
+  ];
 }
 
 export const GENERATION_TEMPLATES: GenerationTemplate[] = [

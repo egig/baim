@@ -2,9 +2,10 @@ import { useCallback, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Generation, ImageEntry } from "../../lib/tauri";
 import { Button } from "../../root";
-import { IconSparkles, IconTrash, IconX } from "../../lib/icons";
+import { IconBookmarkPlus, IconSparkles, IconTrash, IconX } from "../../lib/icons";
 import { DetailRow } from "./DetailRow";
 import { Mono } from "./Mono";
+import { SaveTemplateDialog } from "./SaveTemplateDialog";
 import { TemplatePicker } from "./TemplatePicker";
 import { VariantTile } from "./VariantTile";
 import { displayName, fmtDate, fmtSize, kindOf } from "./helpers";
@@ -69,6 +70,7 @@ export function DetailPanel({
   // selection, so an effect-attached ResizeObserver would miss its element on
   // first open. Drives the responsive two-column (image | metadata) header.
   const [panelWidth, setPanelWidth] = useState(0);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const observerRef = useRef<ResizeObserver | null>(null);
   const panelRef = useCallback((el: HTMLDivElement | null) => {
     observerRef.current?.disconnect();
@@ -264,13 +266,32 @@ export function DetailPanel({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
-                        fontSize: 11.5,
-                        color: "var(--ink-500)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
                         marginBottom: 5,
                         padding: "0 10px",
                       }}
                     >
-                      Prompt
+                      <div style={{ fontSize: 11.5, color: "var(--ink-500)" }}>
+                        Prompt
+                      </div>
+                      <div
+                        onClick={() => setSavingTemplate(true)}
+                        title="Simpan sebagai templat"
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "var(--indigo-600)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <IconBookmarkPlus size={11} />
+                        Simpan sebagai templat
+                      </div>
                     </div>
                     <div
                       style={{
@@ -458,6 +479,15 @@ export function DetailPanel({
           {deleting ? "Menghapus…" : "Hapus aset"}
         </Button>
       </div>
+
+      {savingTemplate && prompt && (
+        <SaveTemplateDialog
+          initialPrompt={prompt}
+          sourceImagePath={image.path}
+          onClose={() => setSavingTemplate(false)}
+          onSaved={() => setSavingTemplate(false)}
+        />
+      )}
     </div>
   );
 }

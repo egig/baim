@@ -167,3 +167,43 @@ export async function openWorkspace(path: string): Promise<WorkspaceInfo> {
 export async function forgetWorkspace(path: string): Promise<void> {
   return invoke<void>("forget_workspace", { path });
 }
+
+/** A user-saved prompt template: a reusable name + prompt, with a preview
+ *  image copied into app-wide storage so it survives its source workspace
+ *  being moved/renamed/deleted. */
+export interface Template {
+  id: string;
+  name: string;
+  prompt: string;
+  preview_path: string;
+  created_at: number;
+}
+
+/** User-saved prompt templates, most-recently-created first. */
+export async function listTemplates(): Promise<Template[]> {
+  return invoke<Template[]>("list_templates");
+}
+
+/** Save a prompt as a reusable template, copying `sourceImagePath`'s image in
+ *  as its preview. */
+export async function saveTemplate(
+  name: string,
+  prompt: string,
+  sourceImagePath: string
+): Promise<Template> {
+  return invoke<Template>("save_template", {
+    name,
+    prompt,
+    sourceImagePath,
+  });
+}
+
+/** Delete a saved template and its preview file. */
+export async function deleteTemplate(id: string): Promise<void> {
+  return invoke<void>("delete_template", { id });
+}
+
+/** Rename an existing saved template. */
+export async function renameTemplate(id: string, name: string): Promise<void> {
+  return invoke<void>("rename_template", { id, name });
+}

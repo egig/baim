@@ -1,6 +1,8 @@
 use crate::generation;
 use crate::generation::{Generation, ImageEntry};
 use crate::provider::{self, ProviderInfo};
+use crate::registry::TemplateRow;
+use crate::templates;
 use crate::workspace::{self, active_workspace, AppState, WorkspaceInfo};
 
 /// Enqueue a single generation (status `queued`) referencing its source image by
@@ -200,4 +202,46 @@ pub async fn open_workspace(
 #[tauri::command]
 pub fn forget_workspace(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
     state.registry.forget_workspace(&path)
+}
+
+/// User-saved prompt templates, most-recently-created first.
+#[tauri::command]
+pub fn list_templates(state: tauri::State<'_, AppState>) -> Result<Vec<TemplateRow>, String> {
+    state.registry.list_templates()
+}
+
+/// Save a prompt as a reusable template, copying `source_image_path`'s image
+/// into app-wide storage as its preview. `async` since it does blocking file
+/// I/O (`fs::copy`) that shouldn't block the UI thread.
+#[tauri::command]
+pub async fn save_template(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    prompt: String,
+    source_image_path: String,
+) -> Result<TemplateRow, String> {
+    templates::save_template(
+        &state.registry,
+        &state.templates_dir,
+        &name,
+        &prompt,
+        &source_image_path,
+    )
+}
+
+/// Delete a saved template and its preview file. `async` for the same reason
+/// as `save_template`.
+#[tauri::command]
+pub async fn delete_template(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    templates::delete_template(&state.registry, &id)
+}
+
+/// Rename an existing saved template.
+#[tauri::command]
+pub fn rename_template(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    state.registry.rename_template(&id, &name)
 }
