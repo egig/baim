@@ -95,8 +95,8 @@ async fn do_submit(db: &Db, record: &mut Generation) -> Result<(), String> {
         .read_api_key(&record.provider)
         .ok_or_else(|| format!("No API key set for {}", record.provider))?;
 
-    // Meta-providers (cloud) need the downstream provider's API key too.
-    let provider_api_key = if record.provider == "cloud" {
+    // Meta-providers (recraftory) need the downstream provider's API key too.
+    let provider_api_key = if record.provider == "recraftory" {
         db.read_api_key("google")
     } else {
         None

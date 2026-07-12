@@ -4,27 +4,25 @@ use sabi::provider::{
 };
 use serde::Deserialize;
 
-/// CloudProvider delegates generation to the cloud backend (Cloudflare Workers).
-/// `req.api_key` is the cloud API key (Bearer token). `req.provider_api_key`
-/// (when present) is the downstream provider key (e.g. Gemini) forwarded to the
-/// cloud.
-pub struct CloudProvider;
+/// RecraftoryProvider delegates generation to the Recraftory cloud backend
+/// (Cloudflare Workers). `req.api_key` is the Recraftory API key (Bearer
+/// token). `req.provider_api_key` (when present) is the downstream provider
+/// key (e.g. Gemini) forwarded to Recraftory.
+pub struct RecraftoryProvider;
 
 #[async_trait::async_trait]
-impl ImageProvider for CloudProvider {
+impl ImageProvider for RecraftoryProvider {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
-            id: "cloud".to_string(),
-            label: "Cloud".to_string(),
+            id: "recraftory".to_string(),
+            label: "Recraftory".to_string(),
             key_hint: "cld_...".to_string(),
             key_url: "https://cloud.example.com".to_string(),
         }
     }
 
     async fn create(&self, req: GenerateRequest) -> Result<CreateOutcome, String> {
-        let endpoint = CLOUD_ENDPOINT
-            .get()
-            .ok_or_else(|| "Cloud endpoint not configured")?;
+        let endpoint = recraftory_endpoint()?;
 
         let body = serde_json::json!({
             "prompt": req.prompt,
@@ -45,28 +43,28 @@ impl ImageProvider for CloudProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Failed to reach cloud backend: {}", e))?;
+            .map_err(|e| format!("Failed to reach Recraftory backend: {}", e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| format!("Failed to read cloud response: {}", e))?;
+            .map_err(|e| format!("Failed to read Recraftory response: {}", e))?;
 
         if status.as_u16() == 402 {
             return Err(OUT_OF_CREDITS_ERROR.to_string());
         }
         if !status.is_success() {
-            return Err(format!("Cloud API error ({}): {}", status, body_text));
+            return Err(format!("Recraftory API error ({}): {}", status, body_text));
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&body_text)
-            .map_err(|e| format!("Cloud API parse error: {}", e))?;
+            .map_err(|e| format!("Recraftory API parse error: {}", e))?;
 
         let job_id = parsed
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("Cloud response missing id: {}", body_text))?;
+            .ok_or_else(|| format!("Recraftory response missing id: {}", body_text))?;
 
         Ok(CreateOutcome::Pending {
             poll_url: format!("{}/api/jobs/{}", endpoint, job_id),
@@ -84,20 +82,20 @@ impl ImageProvider for CloudProvider {
             .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
-            .map_err(|e| format!("Failed to poll cloud backend: {}", e))?;
+            .map_err(|e| format!("Failed to poll Recraftory backend: {}", e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| format!("Failed to read cloud response: {}", e))?;
+            .map_err(|e| format!("Failed to read Recraftory response: {}", e))?;
 
         if !status.is_success() {
-            return Err(format!("Cloud poll error ({}): {}", status, body_text));
+            return Err(format!("Recraftory poll error ({}): {}", status, body_text));
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&body_text)
-            .map_err(|e| format!("Cloud poll parse error: {}", e))?;
+            .map_err(|e| format!("Recraftory poll parse error: {}", e))?;
 
         let job_status = parsed
             .get("status")
@@ -110,11 +108,11 @@ impl ImageProvider for CloudProvider {
                 let output_path = parsed
                     .get("outputPath")
                     .and_then(|v| v.as_str())
-                    .ok_or("Cloud response missing outputPath")?;
+                    .ok_or("Recraftory response missing outputPath")?;
 
-                // Download the image from the cloud
+                // Download the image from Recraftory
                 let img_resp = client
-                    .get(format!("{}/api/images/{}", CLOUD_ENDPOINT.get().ok_or("Cloud endpoint not configured")?, output_path))
+                    .get(format!("{}/api/images/{}", recraftory_endpoint()?, output_path))
                     .send()
                     .await
                     .map_err(|e| format!("Failed to download image: {}", e))?;
@@ -135,7 +133,7 @@ impl ImageProvider for CloudProvider {
                 let error = parsed
                     .get("error")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Cloud job failed");
+                    .unwrap_or("Recraftory job failed");
                 Ok(PollOutcome::Failed {
                     error: error.to_string(),
                     logs: None,
@@ -149,12 +147,22 @@ impl ImageProvider for CloudProvider {
     }
 }
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
-static CLOUD_ENDPOINT: OnceLock<String> = OnceLock::new();
+/// A `Mutex` (not `OnceLock`) because the endpoint is user-editable at
+/// runtime from the settings UI, not just set once at startup.
+static RECRAFTORY_ENDPOINT: Mutex<Option<String>> = Mutex::new(None);
 
-pub fn set_cloud_endpoint(endpoint: String) {
-    let _ = CLOUD_ENDPOINT.set(endpoint);
+pub fn set_recraftory_endpoint(endpoint: String) {
+    *RECRAFTORY_ENDPOINT.lock().unwrap() = Some(endpoint);
+}
+
+fn recraftory_endpoint() -> Result<String, String> {
+    RECRAFTORY_ENDPOINT
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "Recraftory endpoint not configured".to_string())
 }
 
 #[derive(Deserialize)]
@@ -163,11 +171,9 @@ struct CreditBalanceResponse {
     credit_balance: i64,
 }
 
-/// Queries the cloud backend for the current key's remaining credit balance.
+/// Queries the Recraftory backend for the current key's remaining credit balance.
 pub async fn get_credit_balance(api_key: &str) -> Result<i64, String> {
-    let endpoint = CLOUD_ENDPOINT
-        .get()
-        .ok_or_else(|| "Cloud endpoint not configured")?;
+    let endpoint = recraftory_endpoint()?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -179,20 +185,20 @@ pub async fn get_credit_balance(api_key: &str) -> Result<i64, String> {
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await
-        .map_err(|e| format!("Failed to reach cloud backend: {}", e))?;
+        .map_err(|e| format!("Failed to reach Recraftory backend: {}", e))?;
 
     let status = resp.status();
     let body_text = resp
         .text()
         .await
-        .map_err(|e| format!("Failed to read cloud response: {}", e))?;
+        .map_err(|e| format!("Failed to read Recraftory response: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("Cloud API error ({}): {}", status, body_text));
+        return Err(format!("Recraftory API error ({}): {}", status, body_text));
     }
 
     let parsed: CreditBalanceResponse = serde_json::from_str(&body_text)
-        .map_err(|e| format!("Cloud API parse error: {}", e))?;
+        .map_err(|e| format!("Recraftory API parse error: {}", e))?;
 
     Ok(parsed.credit_balance)
 }

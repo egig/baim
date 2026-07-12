@@ -16,7 +16,7 @@ import { IconX, IconLoader2 } from "../lib/icons";
 /** Which generation states the list is filtered to. */
 type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
 
-/** Sentinel error returned by the cloud provider when the key's credit
+/** Sentinel error returned by the Recraftory provider when the key's credit
  *  balance is exhausted (sabi::provider::OUT_OF_CREDITS_ERROR). Shown as a
  *  distinct message rather than the raw generic-looking string. */
 const OUT_OF_CREDITS = "OUT_OF_CREDITS";

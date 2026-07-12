@@ -127,15 +127,15 @@ pub async fn save_uploaded_image(
     generation::save_uploaded_image(&*state, &data_uri, title.as_deref())
 }
 
-/// The configured cloud backend endpoint URL.
+/// The configured Recraftory backend endpoint URL.
 #[tauri::command]
-pub fn get_cloud_endpoint(state: tauri::State<'_, Db>) -> Option<String> {
-    state.read_setting("cloud_endpoint")
+pub fn get_recraftory_endpoint(state: tauri::State<'_, Db>) -> Option<String> {
+    state.read_setting("recraftory_endpoint")
 }
 
-/// Persist the cloud backend endpoint URL and update the CloudProvider config.
+/// Persist the Recraftory backend endpoint URL and update the RecraftoryProvider config.
 #[tauri::command]
-pub fn set_cloud_endpoint(
+pub fn set_recraftory_endpoint(
     state: tauri::State<'_, Db>,
     endpoint: String,
 ) -> Result<(), String> {
@@ -143,18 +143,18 @@ pub fn set_cloud_endpoint(
     if endpoint.is_empty() {
         return Ok(());
     }
-    state.write_setting("cloud_endpoint", &endpoint)?;
-    crate::providers::cloud::set_cloud_endpoint(endpoint);
+    state.write_setting("recraftory_endpoint", &endpoint)?;
+    crate::providers::recraftory::set_recraftory_endpoint(endpoint);
     Ok(())
 }
 
-/// The remaining credit balance on the configured cloud API key.
+/// The remaining credit balance on the configured Recraftory API key.
 #[tauri::command]
-pub async fn get_cloud_credit_balance(state: tauri::State<'_, Db>) -> Result<i64, String> {
+pub async fn get_recraftory_credit_balance(state: tauri::State<'_, Db>) -> Result<i64, String> {
     let api_key = state
-        .read_api_key("cloud")
-        .ok_or_else(|| "No cloud API key configured".to_string())?;
-    crate::providers::cloud::get_credit_balance(&api_key).await
+        .read_api_key("recraftory")
+        .ok_or_else(|| "No Recraftory API key configured".to_string())?;
+    crate::providers::recraftory::get_credit_balance(&api_key).await
 }
 
 #[tauri::command]

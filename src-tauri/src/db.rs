@@ -101,6 +101,32 @@ impl Db {
         )
         .map_err(|e| format!("Failed to fail orphaned replicate generations: {}", e))?;
 
+        // The "cloud" provider was renamed to "recraftory" (same backend, new
+        // name). Rewrite existing databases so saved selections, keys, and
+        // generation history follow the rename rather than silently falling
+        // back to the default provider.
+        conn.execute(
+            "UPDATE settings SET value = 'recraftory'
+             WHERE key = ?1 AND value = 'cloud'",
+            params![ACTIVE_PROVIDER_KEY],
+        )
+        .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
+        conn.execute(
+            "UPDATE generations SET provider = 'recraftory' WHERE provider = 'cloud'",
+            [],
+        )
+        .map_err(|e| format!("Failed to migrate cloud generations: {}", e))?;
+        conn.execute(
+            "UPDATE settings SET key = 'recraftory_api_key' WHERE key = 'cloud_api_key'",
+            [],
+        )
+        .map_err(|e| format!("Failed to migrate cloud api key setting: {}", e))?;
+        conn.execute(
+            "UPDATE settings SET key = 'recraftory_endpoint' WHERE key = 'cloud_endpoint'",
+            [],
+        )
+        .map_err(|e| format!("Failed to migrate cloud endpoint setting: {}", e))?;
+
         // Index on the source link, created after the column is guaranteed to exist.
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_generations_source ON generations(source_id)",

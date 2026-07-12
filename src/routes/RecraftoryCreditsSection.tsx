@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCloudCreditBalance } from "../lib/tauri";
+import { getRecraftoryCreditBalance } from "../lib/tauri";
 
 const styles = {
   row: {
@@ -34,7 +34,7 @@ const styles = {
   },
 };
 
-export default function CloudCreditsSection() {
+export default function RecraftoryCreditsSection() {
   const [balance, setBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function CloudCreditsSection() {
   function load() {
     setLoading(true);
     setError(null);
-    getCloudCreditBalance()
+    getRecraftoryCreditBalance()
       .then(setBalance)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));

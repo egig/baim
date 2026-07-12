@@ -59,8 +59,8 @@ pub trait ImageProvider: Send + Sync {
 /// The identifier assumed when none is stored (existing rows, fresh installs).
 pub const DEFAULT_PROVIDER: &str = "google";
 
-/// Sentinel error returned by `CloudProvider::create` when the cloud backend
-/// responds 402 (insufficient credit balance), so callers can distinguish
+/// Sentinel error returned by `RecraftoryProvider::create` when the Recraftory
+/// backend responds 402 (insufficient credit balance), so callers can distinguish
 /// "out of credits" from a generic generation failure without a structured
 /// per-provider error type.
 pub const OUT_OF_CREDITS_ERROR: &str = "OUT_OF_CREDITS";

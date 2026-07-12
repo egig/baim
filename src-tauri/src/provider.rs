@@ -10,7 +10,7 @@ pub use sabi::provider::{
 pub fn all_providers() -> Vec<Box<dyn ImageProvider>> {
     vec![
         Box::new(crate::providers::google::GoogleProvider),
-        Box::new(crate::providers::cloud::CloudProvider),
+        Box::new(crate::providers::recraftory::RecraftoryProvider),
     ]
 }
 

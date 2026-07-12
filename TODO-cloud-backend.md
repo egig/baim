@@ -10,21 +10,10 @@
 - [x] Make `src-tauri/src/providers/google.rs` a re-export
 - [x] Verify `cargo build` works
 
-## Phase 2: Cloud Backend (`packages/sabi-cloud/`)
+## Phase 2: Cloud Backend — moved to [`sabi-cloud`](../sabi-cloud)
 
-- [ ] Scaffold Worker project with `hono`
-- [ ] Create D1 database + R2 bucket
-- [ ] Write `src/domain/` — Job, User, Image entities + repository interfaces
-- [ ] Write `src/infrastructure/d1/` — D1 repository implementations
-- [ ] Write `src/infrastructure/r2/` — R2 image store
-- [ ] Write `src/infrastructure/providers/gemini.ts` — Gemini Batch API client
-- [ ] Write `src/application/` — job service, auth service
-- [ ] Write `src/workers/api.ts` — Hono router with all endpoints
-- [ ] Write `src/workers/cron.ts` — poll pending jobs (30s interval)
-- [ ] Write `src/workers/queue.ts` — submit queued jobs
-- [ ] Write `migrations/001_init.sql`
-- [ ] Wire up `src/index.ts` as composition root
-- [ ] Configure `wrangler.toml` with bindings + cron trigger
+Done, and now developed as its own project (was `packages/sabi-cloud/` in
+this repo). See that repo's README for its own roadmap.
 
 ## Phase 3: CloudProvider (Desktop)
 

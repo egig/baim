@@ -17,10 +17,6 @@
 | `npx tauri build` | Production bundle |
 | `cargo check` / `cargo build` | Rust workspace (from repo root) |
 | `cargo check -p sabi` | Shared crate only |
-| `npm run dev` (from `packages/sabi-cloud/`) | `wrangler dev` for Workers dev server |
-| `npm run typecheck` (from `packages/sabi-cloud/`) | TypeScript typecheck for cloud backend |
-| `npm run migrate` (from `packages/sabi-cloud/`) | Apply D1 migration |
-| `npm run deploy` (from `packages/sabi-cloud/`) | Deploy Worker to Cloudflare |
 
 No test suite.
 
@@ -62,7 +58,7 @@ Tauri v2 app, two halves over `invoke()`.
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | Re-exports `ImageProvider` trait + types from `sabi`; provider registry (`all_providers`/`get_provider`) |
 | `providers/google.rs` | Re-export of GoogleProvider from `sabi` |
-| `providers/cloud.rs` | `CloudProvider` — REST client to cloud backend (Cloudflare Workers) |
+| `providers/recraftory.rs` | `RecraftoryProvider` — REST client to cloud backend (Cloudflare Workers) |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, storage dir, `ImageEntry`/`Generation` types |
 | `db.rs` | SQLite queries for `images` and `generations` tables |
 
@@ -70,7 +66,7 @@ Commands: `create_prediction`, `create_predictions` (batch: one prediction per
 prompt), `refresh_generation`, `list_providers`,
 `get_active_provider`, `set_active_provider`, `has_api_key`, `set_api_key`,
 `get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
-`get_cloud_endpoint`, `set_cloud_endpoint`,
+`get_recraftory_endpoint`, `set_recraftory_endpoint`,
 `get_storage_dir`, `set_storage_dir`.
 
 ### Provider abstraction
@@ -91,17 +87,21 @@ by both the desktop app and (conceptually) the cloud backend.
   Parses the operation as `serde_json::Value`, searches defensively for state
   (matches `BATCH_STATE_*` or `JOB_STATE_*` by suffix), image (`find_inline_image`),
   and errors. Retries transient 5xx on create with exponential backoff.
-- **Cloud** — REST client to the cloud backend (Cloudflare Workers). Forwards
+- **Recraftory** — REST client to the cloud backend (Cloudflare Workers). Forwards
   jobs to `POST /api/jobs` and polls via `GET /api/jobs/:id`. The downstream
-  provider API key (e.g. Gemini) is passed alongside the cloud auth key in
+  provider API key (e.g. Gemini) is passed alongside the Recraftory auth key in
   `provider_api_key`.
 
 The active provider is a **global choice** stored in the DB `settings` table
 (`active_provider` key) and each `generations` row records the `provider` that
-produced it. A one-time migration in `db.rs::init_tables` handles databases
-from when **Replicate** was registered: `active_provider = 'replicate'` is
-rewritten to `google`, and unfinished replicate generations are marked `failed`
-(finished rows keep `provider = 'replicate'` as history).
+produced it. One-time migrations in `db.rs::init_tables` handle databases
+from before provider renames/removals: from when **Replicate** was registered,
+`active_provider = 'replicate'` is rewritten to `google`, and unfinished
+replicate generations are marked `failed` (finished rows keep
+`provider = 'replicate'` as history); from when the cloud provider was named
+**`cloud`**, `active_provider`, `generations.provider`, and the
+`cloud_api_key`/`cloud_endpoint` settings keys are rewritten to
+`recraftory`/`recraftory_api_key`/`recraftory_endpoint`.
 
 ### Key constraints
 
@@ -152,25 +152,10 @@ rewritten to `google`, and unfinished replicate generations are marked `failed`
 ### Shared crate (`sabi/`)
 
 Cargo workspace member. Contains the `ImageProvider` trait + types and the
-`GoogleProvider` implementation. Used by the desktop app (`src-tauri/`) and
-available for the cloud backend (if ever needed in Rust).
+`GoogleProvider` implementation. Used by the desktop app (`src-tauri/`).
 
-### Cloud backend (`packages/sabi-cloud/`)
+### Cloud backend
 
-Cloudflare Workers + D1 + R2. TypeScript with Hono router. DDD structure:
-
-| Layer | Path | Contents |
-|---|---|---|
-| Domain | `src/domain/` | `Job`, `User` entities, repository interfaces (`ports.ts`) |
-| Application | `src/application/` | `JobService` (create/poll/retry), `AuthService` (register/authenticate) |
-| Infrastructure | `src/infrastructure/d1/` | D1 implementations of repositories |
-| | `src/infrastructure/r2/` | R2 image store |
-| | `src/infrastructure/providers/` | Gemini client + provider registry |
-| Workers | `src/workers/api.ts` | Hono REST API (jobs CRUD, auth, images, models) |
-| | `src/workers/cron.ts` | Scheduled (30s) — poll pending jobs |
-| | `src/workers/queue.ts` | Queue consumer — submit queued jobs |
-
-**API endpoints:** `POST /api/auth/register`, `POST /api/jobs`, `GET /api/jobs/:id`,
-`GET /api/jobs`, `POST /api/jobs/:id/retry`, `GET /api/images/:key`, `GET /api/models`.
-
-Deploy with `npm run deploy` (from `packages/sabi-cloud/`). Requires `wrangler`.
+The Cloudflare Workers + D1 + R2 implementation that `RecraftoryProvider`
+(`providers/recraftory.rs`) talks to over REST now lives in a separate project,
+[`sabi-cloud`](../sabi-cloud) — see its README for architecture and commands.

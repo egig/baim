@@ -47,20 +47,15 @@ Set a Gemini API key in Settings → API Keys, upload an image, write a prompt, 
 sabi/
 ├── src/               React 19 + react-router v8 frontend
 ├── sabi/              Shared Rust crate (ImageProvider trait + GoogleProvider)
-├── src-tauri/         Tauri v2 backend (Rust, SQLite)
-└── packages/
-    └── sabi-cloud/    Cloudflare Workers (optional cloud mode)
+└── src-tauri/         Tauri v2 backend (Rust, SQLite)
 ```
 
 The frontend communicates with the Rust backend via Tauri `invoke()`. Image generation goes through the `ImageProvider` trait — providers register themselves in `all_providers()` and are driven from the settings UI. The active provider and API keys are stored in SQLite; the frontend never sees the key value.
 
 ## Cloud backend (optional)
 
-A Cloudflare Workers backend in `packages/sabi-cloud/` supports offloading generation. Deploy with:
-
-```bash
-cd packages/sabi-cloud
-npm run deploy
-```
-
-See `TODO-cloud-backend.md` for the roadmap.
+`CloudProvider` (`src-tauri/src/providers/cloud.rs`) can offload generation to
+a REST API instead of calling a model provider directly. The Cloudflare
+Workers implementation of that API lives in a separate project,
+[`sabi-cloud`](../sabi-cloud) — see its README for setup and deploy
+instructions.

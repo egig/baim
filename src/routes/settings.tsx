@@ -11,7 +11,8 @@ import {
   type ProviderInfo,
 } from "../lib/tauri";
 import { IconX } from "../lib/icons";
-import CloudCreditsSection from "./CloudCreditsSection";
+import RecraftoryCreditsSection from "./RecraftoryCreditsSection";
+import RecraftoryEndpointSection from "./RecraftoryEndpointSection";
 
 const styles = {
   header: {
@@ -210,10 +211,12 @@ function ProviderSection({
         <>
           <div style={styles.divider} />
           <ApiKeySection key={activeProvider.id} provider={activeProvider} />
-          {activeProvider.id === "cloud" && (
+          {activeProvider.id === "recraftory" && (
             <>
               <div style={styles.divider} />
-              <CloudCreditsSection />
+              <RecraftoryEndpointSection />
+              <div style={styles.divider} />
+              <RecraftoryCreditsSection />
             </>
           )}
         </>
