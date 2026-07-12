@@ -10,7 +10,7 @@ import {
 } from "../../lib/tauri";
 import { activeWorkspaceQuery, imagesQuery, generationsQuery } from "../../lib/queries";
 import { useEscapeLayer } from "../../root";
-import { IconChevronDown, IconFolder } from "../../lib/icons";
+import { IconChevronDown, IconFolder, IconX } from "../../lib/icons";
 
 const workspacesQueryKey = ["workspaces"] as const;
 const MENU_WIDTH = 280;
@@ -36,6 +36,7 @@ export function WorkspaceSwitcher({
     null
   );
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -179,53 +180,89 @@ export function WorkspaceSwitcher({
           >
             {workspaces.map((ws) => (
               <div key={ws.path}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => switchTo(ws.path)}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 8px",
-                    border: "none",
-                    borderRadius: "var(--r-control)",
-                    background:
-                      ws.path === activeWorkspace.path
-                        ? "var(--fill-1)"
-                        : "transparent",
-                    cursor: busy ? "default" : "pointer",
-                    textAlign: "left",
-                  }}
+                <div
+                  onMouseEnter={() => setHoveredPath(ws.path)}
+                  onMouseLeave={() =>
+                    setHoveredPath((p) => (p === ws.path ? null : p))
+                  }
+                  style={{ display: "flex", alignItems: "center", gap: 2,
+
+                      border: "none",
+                      borderRadius: "var(--r-control)",
+                      background:
+                        ws.path === activeWorkspace.path
+                          ? "var(--fill-1)"
+                          : "transparent",
+                   }}
                 >
-                  <IconFolder size={15} color="var(--ink-500)" stroke={1.5} />
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        color: "var(--ink-800)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {ws.name}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => switchTo(ws.path)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 8px",
+                      cursor: busy ? "default" : "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <IconFolder size={15} color="var(--ink-500)" stroke={1.5} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          color: "var(--ink-800)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {ws.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 10.5,
+                          color: "var(--ink-500)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {ws.path}
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        color: "var(--ink-500)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {ws.path}
-                    </div>
-                  </div>
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    title="Hapus dari daftar"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onRemoveFromList(ws.path);
+                    }}
+                    style={{
+                      flexShrink: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 24,
+                      height: 24,
+                      marginRight: 4,
+                      border: "none",
+                      borderRadius: "var(--r-control)",
+                      background: "transparent",
+                      cursor: busy ? "default" : "pointer",
+                      opacity: hoveredPath === ws.path ? 1 : 0,
+                    }}
+                  >
+                    <IconX size={13} color="var(--ink-500)" stroke={1.6} />
+                  </button>
+                </div>
                 {error?.path === ws.path && (
                   <div
                     style={{

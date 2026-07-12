@@ -23,6 +23,11 @@ import type { Dims } from "./types";
  *  (narrow windows / small screens) it stays a single stacked column. */
 const DETAIL_TWO_COL_MIN = 520;
 
+/** Height (px) shared by the "Buat varian" tab content — the template grid
+ *  (one row of 120px tiles + label) and the manual-prompt textarea — so
+ *  switching tabs doesn't resize the panel. */
+const VARIAN_CONTENT_HEIGHT = 100;
+
 /** Right-side panel for a single selected asset: preview, metadata, lineage
  *  (source + generated variants), and the "create variant" form (template
  *  picker or manual prompt). */
@@ -409,11 +414,12 @@ export function DetailPanel({
             onChange={setVarianTab}
           />
         </div>
-
-        {varianTab === "template" ? (
+        
+        <div style={{flex: 1}}>
+          {varianTab === "template" ? (
           <div>
             {/* Template picker — pick one or more, generate as a batch */}
-            <TemplatePicker selected={selectedTemplates} onToggle={onToggleTemplate} />
+              <TemplatePicker selected={selectedTemplates} onToggle={onToggleTemplate} />
 
             <Button
               variant="primary"
@@ -432,7 +438,8 @@ export function DetailPanel({
               onChange={(e) => onVariantPromptChange(e.target.value)}
               style={{
                 width: "100%",
-                minHeight: 74,
+                height: VARIAN_CONTENT_HEIGHT,
+                boxSizing: "border-box",
                 resize: "none",
                 border: "1px solid var(--line-4)",
                 borderRadius: "var(--r-button)",
@@ -443,15 +450,20 @@ export function DetailPanel({
                 lineHeight: 1.45,
                 outline: "none",
                 background: "var(--surface-0)",
+                marginBottom: 12,
               }}
             />
-            <div style={{ marginTop: 10 }}>
-              <Button variant="primary" disabled={generateDisabled} onClick={onGenerate}>
-                <IconSparkles size={14} color="#fff" />
-                {generateLabel}
-              </Button>
-            </div>
-            <div
+            <Button variant="primary" disabled={generateDisabled} onClick={onGenerate}>
+              <IconSparkles size={14} color="#fff" />
+              {generateLabel}
+            </Button>
+            
+          </div>
+        )}
+        </div>
+
+        
+        <div
               style={{
                 marginTop: 9,
                 fontSize: 11,
@@ -460,10 +472,7 @@ export function DetailPanel({
               }}
             >
               Varian disimpan sebagai aset baru dan ditautkan ke gambar sumber.
-            </div>
           </div>
-        )}
-
         {error && (
           <div
             style={{

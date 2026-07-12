@@ -34,7 +34,7 @@ export function TemplateTile({
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ width: 120 }}
+      style={{ width: 80 }}
     >
       <div
         onClick={() => onToggle(t.id)}

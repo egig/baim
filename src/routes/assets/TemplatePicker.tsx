@@ -70,7 +70,6 @@ export function TemplatePicker({
 
   return (
     <div ref={wrapRef} style={{ marginBottom }}>
-      <div style={sectionLabel}>Templat saya</div>
       <div style={grid}>
         {visible.map((t) => (
           <TemplateTile
