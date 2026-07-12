@@ -195,7 +195,6 @@ export default function Assets() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
-  const [variantOpen, setVariantOpen] = useState(false);
   const [variantPrompt, setVariantPrompt] = useState("");
   const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(
     new Set()
@@ -230,7 +229,6 @@ export default function Assets() {
 
   const selectAsset = useCallback((path: string) => {
     setSelectedPath(path);
-    setVariantOpen(false);
     setVariantPrompt("");
     setSelectedTemplates(new Set());
     setError(null);
@@ -274,7 +272,6 @@ export default function Assets() {
     setSelectedPaths(new Set());
     setSelectedTemplates(new Set());
     setSelectedPath(null);
-    setVariantOpen(false);
     setError(null);
   }
 
@@ -289,14 +286,8 @@ export default function Assets() {
 
   function close() {
     setSelectedPath(null);
-    setVariantOpen(false);
     setVariantPrompt("");
     setSelectedTemplates(new Set());
-  }
-
-  function toggleVariant() {
-    setVariantOpen((v) => !v);
-    setVariantPrompt("");
   }
 
   function toggleTemplate(id: string) {
@@ -324,7 +315,6 @@ export default function Assets() {
       const saved = await saveImage(dataUri, file.name);
       await refresh();
       setSelectedPath(saved.path);
-      setVariantOpen(true);
       setVariantPrompt("");
     } catch (err) {
       setError(String(err));
@@ -351,7 +341,6 @@ export default function Assets() {
         selectedImage?.id
       );
       enqueueGenerations([gen]);
-      setVariantOpen(false);
       setVariantPrompt("");
     } catch (err) {
       setError(String(err));
@@ -382,7 +371,6 @@ export default function Assets() {
       );
       enqueueGenerations(gens);
       setSelectedTemplates(new Set());
-      setVariantOpen(false);
       setVariantPrompt("");
     } catch (err) {
       setError(String(err));
@@ -552,8 +540,6 @@ export default function Assets() {
             onClose={close}
             onViewImage={setViewerSrc}
             onSelectSource={selectAsset}
-            variantOpen={variantOpen}
-            onToggleVariant={toggleVariant}
             variantPrompt={variantPrompt}
             onVariantPromptChange={setVariantPrompt}
             selectedTemplates={selectedTemplates}
