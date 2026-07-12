@@ -8,6 +8,11 @@ use serde::Deserialize;
 /// (Cloudflare Workers). `req.api_key` is the Recraftory API key (Bearer
 /// token). `req.provider_api_key` (when present) is the downstream provider
 /// key (e.g. Gemini) forwarded to Recraftory.
+///
+/// TODO: not production-ready — deliberately left out of
+/// `crate::provider::all_providers()` until the cloud backend is ready to
+/// ship. Kept compiling so the integration isn't lost.
+#[allow(dead_code)]
 pub struct RecraftoryProvider;
 
 #[async_trait::async_trait]

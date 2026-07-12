@@ -40,8 +40,8 @@ Tauri v2 app, two halves over `invoke()`.
     toolbar's `WorkspaceSwitcher` (`routes/assets/WorkspaceSwitcher.tsx`) is
     the only place the active folder is changed (native picker via
     `@tauri-apps/plugin-dialog`, same as the old Settings folder picker).
-  - `/settings` → `routes/settings.tsx` — settings page (API key/provider
-    section only; no folder picker — see Workspaces below)
+  - `/settings` → `routes/settings.tsx` — settings page (Gemini API key input
+    only; no provider switcher, no folder picker — see Workspaces below)
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
 - `src/root.tsx` — layout shell with sidebar, exports `Button` component.
@@ -63,7 +63,7 @@ Tauri v2 app, two halves over `invoke()`.
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
 | `provider.rs` | Re-exports `ImageProvider` trait + types from `sabi`; provider registry (`all_providers`/`get_provider`) |
 | `providers/google.rs` | Re-export of GoogleProvider from `sabi` |
-| `providers/recraftory.rs` | `RecraftoryProvider` — REST client to cloud backend (Cloudflare Workers) |
+| `providers/recraftory.rs` | `RecraftoryProvider` — REST client to cloud backend (Cloudflare Workers). **TODO: not production-ready**, deliberately excluded from `all_providers()` |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, `ImageEntry`/`Generation` types |
 | `db.rs` | `WorkspaceDb` — SQLite queries for one workspace's `images`/`generations` tables |
 | `registry.rs` | `RegistryDb` — `sabi.db`: global settings (API keys, active provider) + the `workspaces` table |
@@ -81,10 +81,12 @@ prompt), `refresh_generation`, `list_providers`,
 
 Image generation is abstracted behind the `ImageProvider` trait
 (`provider.rs`). Adding a provider = implement the trait + add it to
-`all_providers()`; the settings dropdown, per-provider API-key inputs, and
-per-generation dispatch are all driven off that registry. The trait and the
-**Google/Gemini** implementation live in the `sabi` shared crate, used
-by both the desktop app and (conceptually) the cloud backend.
+`all_providers()`; the per-provider API-key input and per-generation dispatch
+are driven off that registry. Since only one provider is registered,
+`routes/settings.tsx` renders its API-key input directly — no provider
+switcher. The trait and the **Google/Gemini** implementation live in the
+`sabi` shared crate, used by both the desktop app and (conceptually) the
+cloud backend.
 
 **Registered providers:**
 - **Google/Gemini** — async, via the **Batch API**. Submits a single-request
@@ -95,10 +97,16 @@ by both the desktop app and (conceptually) the cloud backend.
   Parses the operation as `serde_json::Value`, searches defensively for state
   (matches `BATCH_STATE_*` or `JOB_STATE_*` by suffix), image (`find_inline_image`),
   and errors. Retries transient 5xx on create with exponential backoff.
-- **Recraftory** — REST client to the cloud backend (Cloudflare Workers). Forwards
-  jobs to `POST /api/jobs` and polls via `GET /api/jobs/:id`. The downstream
-  provider API key (e.g. Gemini) is passed alongside the Recraftory auth key in
-  `provider_api_key`.
+
+**Not registered (TODO):**
+- **Recraftory** (`providers/recraftory.rs`) — REST client to the cloud
+  backend (Cloudflare Workers). Forwards jobs to `POST /api/jobs` and polls
+  via `GET /api/jobs/:id`. The downstream provider API key (e.g. Gemini) is
+  passed alongside the Recraftory auth key in `provider_api_key`. Implemented
+  but not production-ready, so it's deliberately left out of
+  `all_providers()` and has no UI (no settings section, no provider
+  switcher) until the cloud backend is ready to ship. Re-add it to
+  `all_providers()` to bring it back.
 
 The active provider is a **global choice** stored in the registry's `settings`
 table (`active_provider` key) and each `generations` row (in whichever

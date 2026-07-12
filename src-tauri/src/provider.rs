@@ -5,13 +5,14 @@ pub use sabi::provider::{
 
 /// Every provider registered in this application. Adding a provider is a
 /// two-line change: implement `ImageProvider` (in its own module) and add it
-/// here — the settings dropdown, per-provider keys, and per-generation dispatch
-/// are all driven off this list.
+/// here — the per-provider keys and per-generation dispatch are all driven
+/// off this list.
+///
+/// TODO: `RecraftoryProvider` is implemented but not production-ready (see
+/// `providers/recraftory.rs`) — re-add it here once the cloud backend is
+/// ready to ship.
 pub fn all_providers() -> Vec<Box<dyn ImageProvider>> {
-    vec![
-        Box::new(crate::providers::google::GoogleProvider),
-        Box::new(crate::providers::recraftory::RecraftoryProvider),
-    ]
+    vec![Box::new(crate::providers::google::GoogleProvider)]
 }
 
 /// Look up a provider by its id, if registered.

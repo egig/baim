@@ -139,21 +139,6 @@ export async function saveImage(
   });
 }
 
-/** The remaining credit balance on the configured Recraftory API key. */
-export async function getRecraftoryCreditBalance(): Promise<number> {
-  return invoke<number>("get_recraftory_credit_balance");
-}
-
-/** The configured Recraftory backend endpoint URL, or `null` if unset. */
-export async function getRecraftoryEndpoint(): Promise<string | null> {
-  return invoke<string | null>("get_recraftory_endpoint");
-}
-
-/** Persist the Recraftory backend endpoint URL. */
-export async function setRecraftoryEndpoint(endpoint: string): Promise<void> {
-  return invoke<void>("set_recraftory_endpoint", { endpoint });
-}
-
 /** A user-picked folder holding its own images/generations catalog. Display
  *  `name` is always the live folder basename, never a stored/editable name. */
 export interface WorkspaceInfo {

@@ -264,7 +264,7 @@ impl ImageProvider for GoogleProvider {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
             id: "google".to_string(),
-            label: "Google".to_string(),
+            label: "Gemini".to_string(),
             key_hint: "AIza...".to_string(),
             key_url: "https://aistudio.google.com/apikey".to_string(),
         }

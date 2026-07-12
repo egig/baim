@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   listProviders,
-  getActiveProvider,
-  setActiveProvider,
   hasApiKey,
   setApiKey as saveApiKey,
   type ProviderInfo,
 } from "../lib/tauri";
 import { IconX } from "../lib/icons";
-import RecraftoryCreditsSection from "./RecraftoryCreditsSection";
-import RecraftoryEndpointSection from "./RecraftoryEndpointSection";
 
 const styles = {
   header: {
@@ -84,18 +80,6 @@ const styles = {
     outline: "none",
     boxSizing: "border-box" as const,
   },
-  select: {
-    width: "100%",
-    padding: "9px 11px",
-    border: "1px solid var(--line-4)",
-    borderRadius: "var(--r-control)",
-    fontSize: 13,
-    color: "var(--ink-800)",
-    background: "var(--surface-0)",
-    outline: "none",
-    boxSizing: "border-box" as const,
-    cursor: "pointer",
-  },
   row: {
     display: "flex",
     gap: 10,
@@ -129,16 +113,6 @@ const styles = {
     fontSize: 11.5,
     color: "var(--ink-400)",
   },
-  divider: {
-    height: 1,
-    background: "var(--line-3)",
-    margin: "2px 0",
-  },
-  subheading: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: "var(--ink-800)",
-  },
   link: {
     color: "var(--indigo-500)",
     fontWeight: 600,
@@ -150,63 +124,6 @@ const styles = {
     margin: 0,
   },
 };
-
-function ProviderSection({
-  providers,
-  active,
-  activeProvider,
-  onChange,
-}: {
-  providers: ProviderInfo[];
-  active: string;
-  activeProvider: ProviderInfo | undefined;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <div style={styles.card}>
-      <div>
-        <div style={styles.heading}>Image Provider</div>
-        <p style={styles.sub}>
-          Which AI backend generates image variants. Each provider uses its own
-          API key.
-        </p>
-      </div>
-
-      <div>
-        <label htmlFor="provider" style={styles.label}>
-          Provider
-        </label>
-        <select
-          id="provider"
-          value={active}
-          onChange={(e) => onChange(e.target.value)}
-          style={styles.select}
-        >
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {activeProvider && (
-        <>
-          <div style={styles.divider} />
-          <ApiKeySection key={activeProvider.id} provider={activeProvider} />
-          {activeProvider.id === "recraftory" && (
-            <>
-              <div style={styles.divider} />
-              <RecraftoryEndpointSection />
-              <div style={styles.divider} />
-              <RecraftoryCreditsSection />
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
 
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   const [apiKey, setApiKey] = useState("");
@@ -256,7 +173,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   return (
     <>
       <div>
-        <div style={styles.subheading}>{provider.label} API Key</div>
+        <div style={styles.heading}>{provider.label} API Key</div>
         <p style={styles.sub}>
           Your key is stored locally on this machine and never sent anywhere
           except directly to {provider.label}'s API.
@@ -320,24 +237,13 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
 }
 
 export default function Settings({ onClose }: { onClose: () => void }) {
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [active, setActive] = useState<string>("");
+  const [provider, setProvider] = useState<ProviderInfo | null>(null);
 
   useEffect(() => {
-    listProviders().then(setProviders).catch(() => {});
-    getActiveProvider().then(setActive).catch(() => {});
+    listProviders()
+      .then((providers) => setProvider(providers[0] ?? null))
+      .catch(() => {});
   }, []);
-
-  async function handleProviderChange(id: string) {
-    setActive(id);
-    try {
-      await setActiveProvider(id);
-    } catch {
-      // Keep the local selection; the backend write is best-effort.
-    }
-  }
-
-  const activeProvider = providers.find((p) => p.id === active);
 
   return (
     <>
@@ -348,12 +254,11 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       <div style={styles.body}>
-        <ProviderSection
-          providers={providers}
-          active={active}
-          activeProvider={activeProvider}
-          onChange={handleProviderChange}
-        />
+        {provider && (
+          <div style={styles.card}>
+            <ApiKeySection provider={provider} />
+          </div>
+        )}
       </div>
     </>
   );
