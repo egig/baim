@@ -41,11 +41,20 @@ export async function createPredictions(
   });
 }
 
+/** Result of a queue drain pass: the advanced records, plus whether any
+ *  submission in the batch was rate-limited by its provider. `rate_limited`
+ *  drives the AIMD engine's backoff (see queries.ts) — it is not a failure,
+ *  rate-limited rows are reverted to `queued` server-side and retried later. */
+export interface SubmitOutcome {
+  generations: Generation[];
+  rate_limited: boolean;
+}
+
 /** Drain the queue: submit up to `limit` of the oldest queued jobs to their
  *  provider, promoting them to `pending`. Called each poll tick with the number
  *  of free in-flight slots so concurrency stays capped. */
-export async function submitQueued(limit: number): Promise<Generation[]> {
-  return invoke<Generation[]>("submit_queued", { limit });
+export async function submitQueued(limit: number): Promise<SubmitOutcome> {
+  return invoke<SubmitOutcome>("submit_queued", { limit });
 }
 
 /** Drop every queued job ("Clear queue"). In-flight jobs finish. */
@@ -68,6 +77,12 @@ export async function getImages(): Promise<ImageEntry[]> {
 
 export async function deleteImage(path: string): Promise<void> {
   return invoke<void>("delete_image", { path });
+}
+
+/** Delete multiple images at once (bulk-select "Delete"). Best-effort on the
+ *  backend: a failure on one path doesn't stop the rest from being deleted. */
+export async function deleteImages(paths: string[]): Promise<void> {
+  return invoke<void>("delete_images", { paths });
 }
 
 export interface Generation {
@@ -111,6 +126,18 @@ export async function getActiveProvider(): Promise<string> {
 
 export async function setActiveProvider(id: string): Promise<void> {
   return invoke<void>("set_active_provider", { id });
+}
+
+/** The user-configured ceiling for adaptive generation concurrency (defaults
+ *  to 10 when unset). The AIMD engine in queries.ts ramps `k` up toward this
+ *  and never past it. */
+export async function getMaxConcurrency(): Promise<number> {
+  return invoke<number>("get_max_concurrency");
+}
+
+/** Persist the concurrency ceiling (clamped 1-100 on both ends). */
+export async function setMaxConcurrency(value: number): Promise<void> {
+  return invoke<void>("set_max_concurrency", { value });
 }
 
 /** Whether the given provider has an API key saved in the backend. The key

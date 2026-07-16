@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::WorkspaceDb;
 use crate::provider::{
     get_provider, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
+    RATE_LIMITED_ERROR,
 };
 use crate::registry::RegistryDb;
 
@@ -60,41 +61,70 @@ pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
 
 /// Drain the queue: promote up to `limit` of the oldest `queued` rows to
 /// `pending` by submitting them to their provider. Called each poll tick by the
-/// frontend with `limit = K - in_flight`, so in-flight jobs never exceed K.
-/// Submissions are independent network calls (each provider `create` request
-/// is a separate HTTP round-trip), so they run concurrently via `join_all`
-/// rather than paying `limit` round-trips back to back — `db`/`registry` are
-/// only touched synchronously between `.await` points, never held across one,
-/// so interleaving them here is safe. Failures (bad key, missing source,
-/// provider error) mark that row `failed` without aborting the rest. Returns
-/// the advanced records.
+/// frontend with `limit = k - in_flight` (`k` is the frontend's adaptive
+/// concurrency target), so in-flight jobs never exceed it. Submissions are
+/// independent network calls (each provider `create` request is a separate
+/// HTTP round-trip), so they run concurrently via `join_all` rather than
+/// paying `limit` round-trips back to back — `db`/`registry` are only touched
+/// synchronously between `.await` points, never held across one, so
+/// interleaving them here is safe. Failures (bad key, missing source,
+/// provider error) mark that row `failed` without aborting the rest; a
+/// rate-limited submission instead reverts its row to `queued` (see
+/// `submit_one`) and is reflected in the returned `rate_limited` flag rather
+/// than as a failure.
+/// The result of a `submit_queued` drain pass: the advanced records, plus
+/// whether any submission in the batch was rate-limited by its provider.
+/// Drives the frontend's adaptive concurrency (AIMD) backoff.
+#[derive(Debug, Serialize)]
+pub struct SubmitOutcome {
+    pub generations: Vec<Generation>,
+    pub rate_limited: bool,
+}
+
 pub async fn submit_queued(
     registry: &RegistryDb,
     db: &WorkspaceDb,
     limit: usize,
-) -> Result<Vec<Generation>, String> {
+) -> Result<SubmitOutcome, String> {
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(SubmitOutcome {
+            generations: Vec::new(),
+            rate_limited: false,
+        });
     }
     let queued = db.list_queued(limit)?;
-    let out = futures_util::future::join_all(queued.into_iter().map(|mut record| async move {
-        submit_one(registry, db, &mut record).await;
-        record
+    let results = futures_util::future::join_all(queued.into_iter().map(|mut record| async move {
+        let rate_limited = submit_one(registry, db, &mut record).await;
+        (record, rate_limited)
     }))
     .await;
-    Ok(out)
+    let rate_limited = results.iter().any(|(_, rl)| *rl);
+    let generations = results.into_iter().map(|(record, _)| record).collect();
+    Ok(SubmitOutcome {
+        generations,
+        rate_limited,
+    })
 }
 
-/// Submit one queued row, always persisting the outcome. On any error the row is
-/// stored as `failed` (with the message) rather than propagating, so one bad job
-/// can't abort a drain pass.
-async fn submit_one(registry: &RegistryDb, db: &WorkspaceDb, record: &mut Generation) {
+/// Submit one queued row, always persisting the outcome. A rate-limited
+/// (`RATE_LIMITED_ERROR`) response reverts the row to `queued` — it's retried
+/// on a later drain rather than dying as a visible failure — and returns
+/// `true`. Any other error is stored as `failed` (with the message) rather
+/// than propagating, so one bad job can't abort a drain pass.
+async fn submit_one(registry: &RegistryDb, db: &WorkspaceDb, record: &mut Generation) -> bool {
     if let Err(err) = do_submit(registry, db, record).await {
+        if err == RATE_LIMITED_ERROR {
+            record.status = "queued".to_string();
+            record.poll_url = None;
+            let _ = db.upsert_generation(record);
+            return true;
+        }
         record.status = "failed".to_string();
         record.error = Some(err);
         record.poll_url = None;
         let _ = db.upsert_generation(record);
     }
+    false
 }
 
 async fn do_submit(
@@ -307,6 +337,23 @@ pub fn delete_image(db: &WorkspaceDb, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Delete multiple images (bulk selection). Best-effort: a failure on one path
+/// doesn't stop the rest from being deleted. Returns `Err` naming every path
+/// that failed (with its reason) if at least one did; `Ok` only if all
+/// succeeded.
+pub fn delete_images(db: &WorkspaceDb, paths: &[String]) -> Result<(), String> {
+    let failures: Vec<String> = paths
+        .iter()
+        .filter_map(|path| delete_image(db, path).err().map(|e| format!("{path}: {e}")))
+        .collect();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 pub fn list_saved_images(db: &WorkspaceDb) -> Result<Vec<ImageEntry>, String> {
     db.list_images()
 }
@@ -373,7 +420,7 @@ pub struct ImageEntry {
     pub path: String,
     /// Stable uuid identifying this image independently of its file path. Used as
     /// the target of a generation's `source_id` so children can be listed per
-    /// source. Backfilled for pre-existing rows (see `WorkspaceDb::backfill_image_ids`).
+    /// source.
     #[serde(default)]
     pub id: String,
     pub filename: String,

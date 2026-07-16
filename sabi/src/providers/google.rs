@@ -2,7 +2,7 @@ use base64::Engine;
 use serde::Serialize;
 
 use crate::provider::{
-    CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo,
+    CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo, RATE_LIMITED_ERROR,
 };
 
 const MODEL: &str = "gemini-3.1-flash-image";
@@ -219,12 +219,16 @@ async fn try_create(
     })?;
 
     if !status.is_success() {
+        if status.as_u16() == 429 {
+            // Rate-limited: return the sentinel immediately rather than
+            // retrying internally, so the caller can requeue the job and back
+            // off concurrency instead of burning attempts on a wall that
+            // won't clear in seconds.
+            return Err(AttemptError::Fatal(RATE_LIMITED_ERROR.to_string()));
+        }
         let msg = find_error_message(&parsed).unwrap_or(body);
-        let full = match status.as_u16() {
-            429 => format!("Rate limited by Gemini (429): {}", msg),
-            code => format!("Gemini API error ({}): {}", code, msg),
-        };
-        return Err(if status.as_u16() == 429 || is_retryable_status(status.as_u16()) {
+        let full = format!("Gemini API error ({}): {}", status, msg);
+        return Err(if is_retryable_status(status.as_u16()) {
             AttemptError::Retryable(full)
         } else {
             AttemptError::Fatal(full)

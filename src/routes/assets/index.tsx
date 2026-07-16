@@ -10,6 +10,7 @@ import {
   createPrediction,
   createPredictions,
   deleteImage,
+  deleteImages,
   saveImage,
   getActiveProvider,
   listProviders,
@@ -438,6 +439,27 @@ export default function Assets() {
     }
   }
 
+  async function delBulk() {
+    if (selectedPaths.size === 0 || deleting) return;
+    const count = selectedPaths.size;
+    const confirmed = await ask(
+      `Hapus ${count} aset secara permanen? Tindakan ini tidak bisa dibatalkan.`,
+      { title: "Hapus aset", kind: "warning" }
+    );
+    if (!confirmed) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteImages([...selectedPaths]);
+      await refresh();
+      setSelectedPaths(new Set());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const selectedImage = selectedPath
     ? images.find((i) => i.path === selectedPath) ?? null
     : null;
@@ -526,6 +548,8 @@ export default function Assets() {
             jobCount={bulkJobCount}
             generating={generating}
             onGenerateBulk={generateBulk}
+            deleting={deleting}
+            onDeleteBulk={delBulk}
             error={error}
           />
         )}

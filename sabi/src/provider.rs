@@ -64,3 +64,9 @@ pub const DEFAULT_PROVIDER: &str = "google";
 /// "out of credits" from a generic generation failure without a structured
 /// per-provider error type.
 pub const OUT_OF_CREDITS_ERROR: &str = "OUT_OF_CREDITS";
+
+/// Sentinel error returned by `ImageProvider::create` when the provider
+/// rate-limited the request (e.g. Gemini's 429). Distinct from a generic
+/// failure so callers can requeue the job and back off concurrency instead of
+/// surfacing it as a dead `failed` row.
+pub const RATE_LIMITED_ERROR: &str = "RATE_LIMITED";

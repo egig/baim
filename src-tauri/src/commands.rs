@@ -1,5 +1,5 @@
 use crate::generation;
-use crate::generation::{Generation, ImageEntry};
+use crate::generation::{Generation, ImageEntry, SubmitOutcome};
 use crate::provider::{self, ProviderInfo};
 use crate::registry::TemplateRow;
 use crate::templates;
@@ -38,7 +38,7 @@ pub fn create_predictions(
 pub async fn submit_queued(
     state: tauri::State<'_, AppState>,
     limit: usize,
-) -> Result<Vec<Generation>, String> {
+) -> Result<SubmitOutcome, String> {
     let ws = active_workspace(&state)?;
     generation::submit_queued(&state.registry, &ws.db, limit).await
 }
@@ -105,6 +105,29 @@ pub fn set_active_provider(state: tauri::State<'_, AppState>, id: String) -> Res
     state.registry.set_active_provider(&id)
 }
 
+/// The user-configured ceiling for adaptive generation concurrency (the
+/// frontend's AIMD engine ramps `k` up toward this and never past it).
+/// Defaults to 10 when unset.
+#[tauri::command]
+pub fn get_max_concurrency(state: tauri::State<'_, AppState>) -> u32 {
+    state
+        .registry
+        .read_setting("max_concurrency")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+        .clamp(1, 100)
+}
+
+/// Persist the concurrency ceiling, clamped to a sane range (defense in depth
+/// alongside the frontend's own input clamp).
+#[tauri::command]
+pub fn set_max_concurrency(state: tauri::State<'_, AppState>, value: u32) -> Result<(), String> {
+    let clamped = value.clamp(1, 100);
+    state
+        .registry
+        .write_setting("max_concurrency", &clamped.to_string())
+}
+
 #[tauri::command]
 pub fn get_images(state: tauri::State<'_, AppState>) -> Result<Vec<ImageEntry>, String> {
     let ws = active_workspace(&state)?;
@@ -123,6 +146,17 @@ pub fn get_generations(state: tauri::State<'_, AppState>) -> Result<Vec<Generati
 pub async fn delete_image(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
     let ws = active_workspace(&state)?;
     generation::delete_image(&ws.db, &path)
+}
+
+/// Delete multiple images at once (bulk-select "Delete"). Best-effort: partial
+/// failures are reported but don't block deleting the rest.
+#[tauri::command]
+pub async fn delete_images(
+    state: tauri::State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let ws = active_workspace(&state)?;
+    generation::delete_images(&ws.db, &paths)
 }
 
 // `async` for the same reason: base64-decoding and writing the upload to disk

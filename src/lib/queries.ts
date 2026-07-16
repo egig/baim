@@ -6,16 +6,62 @@ import {
   refreshGeneration,
   submitQueued,
   listTemplates,
+  getMaxConcurrency,
   type ImageEntry,
   type Generation,
+  type SubmitOutcome,
   type Template,
 } from "./tauri";
 
-/** Max generations allowed in flight (`pending`) at once. The queue drainer
- *  promotes at most `K - inFlight` queued jobs per tick, so concurrency — and
- *  therefore provider rate/cost pressure — stays capped no matter how many jobs
- *  are queued. */
-export const K = 3;
+/** Concurrency the engine always starts each app launch at, before ramping up. */
+const FLOOR = 1;
+
+/** Ceiling fallback used until the user's setting loads (see
+ *  `ensureCeilingLoaded`) — matches the backend's own default. */
+const DEFAULT_CEILING = 10;
+
+/** How many drain ticks to hold `k` steady after a rate-limit hit before
+ *  resuming ramp-up, so it doesn't bounce straight back into the same wall. */
+const COOLDOWN_TICKS = 3;
+
+/** Adaptive in-flight concurrency target (AIMD: additive increase /
+ *  multiplicative decrease, the same idea TCP congestion control uses). The
+ *  queue drainer promotes at most `k - inFlight` queued jobs per tick.
+ *
+ *  In-memory only — always restarts at `FLOOR` on app launch rather than
+ *  persisting a learned value: ramping back up costs a few ticks, negligible
+ *  next to how long a batch job takes, and this avoids starting "optimistic"
+ *  after something changed since last session (quota tier, the same key used
+ *  elsewhere).
+ *
+ *  `k` ramps up by 1 only after a drain tick that both saturated `k` (queued
+ *  demand was enough to actually use every free slot — proving nothing isn't
+ *  grounds to ramp) and hit no rate limit. A rate-limited submission halves
+ *  `k` (floor `FLOOR`) immediately and starts a cooldown that pauses
+ *  ramp-up for a few ticks, so it doesn't bounce straight back into the wall
+ *  it just found. */
+let k = FLOOR;
+let ceiling = DEFAULT_CEILING;
+let ceilingLoaded = false;
+let cooldown = 0;
+
+/** Applied by the settings page right after a successful save, so a new
+ *  ceiling takes effect immediately without an app restart. */
+export function setConcurrencyCeiling(value: number): void {
+  ceiling = value;
+  ceilingLoaded = true;
+  k = Math.min(k, ceiling);
+}
+
+async function ensureCeilingLoaded(): Promise<void> {
+  if (ceilingLoaded) return;
+  ceilingLoaded = true; // set eagerly so concurrent ticks don't all fetch
+  try {
+    ceiling = await getMaxConcurrency();
+  } catch {
+    // keep DEFAULT_CEILING
+  }
+}
 
 /** A generation is "active" (keeps the poll/drain engine ticking) while it is
  *  either waiting to be submitted (`queued`) or in flight (`pending`). */
@@ -51,8 +97,9 @@ export function imagesQuery(workspacePath: string | undefined) {
 /** The queue engine, scoped to a workspace. One `queryFn` owns the whole state
  *  machine:
  *   1. poll every `pending` row one step (`refresh_generation`), and
- *   2. if in-flight < K and any `queued` remain, submit the free slots
- *      (`submit_queued`) to promote them to `pending`.
+ *   2. if in-flight < `k` (the adaptive concurrency target, see above) and any
+ *      `queued` remain, submit the free slots (`submit_queued`) to promote
+ *      them to `pending`, then adjust `k` based on the outcome.
  *
  *  It self-polls every 2s while any job is `queued` or `pending`, and stops once
  *  everything settles. Because the always-mounted shell (sidebar badge) observes
@@ -70,6 +117,7 @@ export function generationsQuery(workspacePath: string | undefined) {
 }
 
 async function pollAndDrain(): Promise<Generation[]> {
+  await ensureCeilingLoaded();
   let generations = await getGenerations();
 
   // 1. Advance any in-flight generation by one poll step. Errors are swallowed
@@ -88,10 +136,23 @@ async function pollAndDrain(): Promise<Generation[]> {
   //    polling, since jobs that just finished free up their slots this tick.
   const inFlight = generations.filter((g) => g.status === "pending").length;
   const queued = generations.filter((g) => g.status === "queued").length;
-  const free = K - inFlight;
+  const free = k - inFlight;
+  if (cooldown > 0) cooldown--;
   if (free > 0 && queued > 0) {
-    const submitted = await submitQueued(free).catch(() => [] as Generation[]);
-    generations = mergeById(generations, submitted);
+    const saturated = queued >= free;
+    const result = await submitQueued(free).catch(
+      () => ({ generations: [], rate_limited: false }) as SubmitOutcome
+    );
+    generations = mergeById(generations, result.generations);
+    console.debug("[aimd]", { k, ceiling, cooldown, free, queued, saturated, rate_limited: result.rate_limited });
+
+    // 3. Adjust the concurrency target based on how this drain went.
+    if (result.rate_limited) {
+      k = Math.max(FLOOR, Math.floor(k / 2));
+      cooldown = COOLDOWN_TICKS;
+    } else if (saturated && cooldown === 0 && k < ceiling) {
+      k += 1;
+    }
   }
 
   return generations;

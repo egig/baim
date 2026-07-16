@@ -11,14 +11,6 @@ import { useContainerWidth } from "./useContainerWidth";
 const TILE_WIDTH = 120;
 const GAP = 10;
 
-const sectionLabel: React.CSSProperties = {
-  fontSize: 10.5,
-  fontWeight: 600,
-  letterSpacing: ".03em",
-  color: "var(--ink-350)",
-  textTransform: "uppercase",
-  marginBottom: 8,
-};
 
 /** Grid of generation templates the user can multi-select. Clicking a tile
  *  toggles its membership in `selected`. Shared by the single-asset detail

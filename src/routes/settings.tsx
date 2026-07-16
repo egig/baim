@@ -4,9 +4,12 @@ import {
   listProviders,
   hasApiKey,
   setApiKey as saveApiKey,
+  getMaxConcurrency,
+  setMaxConcurrency,
   type ProviderInfo,
 } from "../lib/tauri";
-import { IconX } from "../lib/icons";
+import { setConcurrencyCeiling } from "../lib/queries";
+import { IconX, IconChevronDown } from "../lib/icons";
 
 const styles = {
   header: {
@@ -124,6 +127,18 @@ const styles = {
     color: "var(--red-600)",
     margin: 0,
   },
+  toggleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    cursor: "pointer",
+    userSelect: "none" as const,
+  },
+  toggleLabel: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--ink-700)",
+  },
 };
 
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
@@ -240,6 +255,96 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   );
 }
 
+function AdvancedSection() {
+  const [expanded, setExpanded] = useState(false);
+  const [value, setValue] = useState<number | "">("");
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMaxConcurrency()
+      .then(setValue)
+      .catch(() => {});
+  }, []);
+
+  async function handleSave() {
+    if (value === "") return;
+    setError(null);
+    try {
+      await setMaxConcurrency(value);
+      setConcurrencyCeiling(value);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <>
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        style={styles.toggleRow}
+      >
+        <IconChevronDown
+          size={12}
+          color="var(--ink-400)"
+          style={{
+            transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+            transition: "transform .12s ease",
+          }}
+        />
+        <span style={styles.toggleLabel}>Advanced</span>
+      </div>
+
+      {expanded && (
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 4 }}
+        >
+          <div>
+            <label htmlFor="max-concurrency" style={styles.label}>
+              Max concurrent generations
+            </label>
+            <input
+              id="max-concurrency"
+              type="number"
+              min={1}
+              max={100}
+              value={value}
+              onChange={(e) =>
+                setValue(e.target.value === "" ? "" : Number(e.target.value))
+              }
+              style={styles.input}
+            />
+            <p style={{ ...styles.sub, marginTop: 6 }}>
+              A ceiling, not a fixed number — the app ramps concurrency up
+              toward this automatically and backs off on rate limits. Gemini
+              caps concurrent batch requests around 100, so values near that
+              only help on higher-tier accounts.
+            </p>
+          </div>
+
+          <div style={styles.row}>
+            <button
+              onClick={handleSave}
+              disabled={value === ""}
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                ...(value === "" ? styles.btnPrimaryDisabled : {}),
+              }}
+            >
+              {saved ? "Saved!" : "Save"}
+            </button>
+          </div>
+
+          {error && <p style={styles.error}>{error}</p>}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Settings({ onClose }: { onClose: () => void }) {
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
 
@@ -263,6 +368,9 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             <ApiKeySection provider={provider} />
           </div>
         )}
+        <div style={styles.card}>
+          <AdvancedSection />
+        </div>
       </div>
     </>
   );

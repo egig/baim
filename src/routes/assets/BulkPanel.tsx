@@ -1,9 +1,10 @@
 import { Button } from "../../root";
-import { IconSparkles } from "../../lib/icons";
+import { IconSparkles, IconTrash } from "../../lib/icons";
 import { TemplatePicker } from "./TemplatePicker";
 
 /** Right-side panel shown in Select mode once ≥1 image is picked: a template
- *  picker fanned across every selected image (N images × M templates). */
+ *  picker fanned across every selected image (N images × M templates), plus
+ *  a bulk-delete action for the same selection. */
 export function BulkPanel({
   selectedCount,
   onClearSelection,
@@ -12,6 +13,8 @@ export function BulkPanel({
   jobCount,
   generating,
   onGenerateBulk,
+  deleting,
+  onDeleteBulk,
   error,
 }: {
   selectedCount: number;
@@ -21,6 +24,8 @@ export function BulkPanel({
   jobCount: number;
   generating: boolean;
   onGenerateBulk: () => void;
+  deleting: boolean;
+  onDeleteBulk: () => void;
   error: string | null;
 }) {
   return (
@@ -121,6 +126,15 @@ export function BulkPanel({
           Tugas masuk antrean dan diproses maksimal 3 sekaligus. Pantau di halaman
           Antrean.
         </div>
+      </div>
+
+      <div style={{ height: 1, background: "var(--line-1)", margin: "2px 0" }} />
+
+      <div style={{ padding: "16px 18px" }}>
+        <Button variant="danger" disabled={deleting} onClick={onDeleteBulk}>
+          <IconTrash size={14} color="var(--red-600)" stroke={1.2} />
+          {deleting ? "Menghapus…" : `Hapus ${selectedCount} gambar`}
+        </Button>
       </div>
     </div>
   );

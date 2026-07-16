@@ -1,6 +1,7 @@
 // Re-export shared types from catalog-core.
 pub use sabi::provider::{
     CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo, DEFAULT_PROVIDER,
+    RATE_LIMITED_ERROR,
 };
 
 /// Every provider registered in this application. Adding a provider is a

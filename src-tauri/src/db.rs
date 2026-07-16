@@ -32,7 +32,7 @@ impl WorkspaceDb {
             "
             CREATE TABLE IF NOT EXISTS images (
                 path TEXT PRIMARY KEY,
-                id TEXT,
+                id TEXT NOT NULL,
                 filename TEXT NOT NULL,
                 title TEXT,
                 created_at INTEGER NOT NULL,
@@ -51,82 +51,11 @@ impl WorkspaceDb {
                 logs TEXT,
                 created_at INTEGER NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_generations_source ON generations(source_id);
             ",
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
-        // Migrations for pre-existing databases: add columns if they're missing.
-        // `ALTER TABLE ... ADD COLUMN` errors when the column already exists, so
-        // ignore that (idempotent) failure. These must run before the index below,
-        // since on an existing DB the `CREATE TABLE IF NOT EXISTS` above is a no-op
-        // and doesn't add the new columns.
-        let _ = conn.execute(
-            "ALTER TABLE generations ADD COLUMN provider TEXT NOT NULL DEFAULT 'google'",
-            [],
-        );
-        let _ = conn.execute("ALTER TABLE images ADD COLUMN id TEXT", []);
-        let _ = conn.execute("ALTER TABLE images ADD COLUMN title TEXT", []);
-        let _ = conn.execute("ALTER TABLE generations ADD COLUMN source_id TEXT", []);
-        let _ = conn.execute("ALTER TABLE generations ADD COLUMN logs TEXT", []);
-
-        // The Replicate provider was removed. Unfinished replicate jobs are
-        // failed (their poll URLs point at a backend we can no longer talk to);
-        // finished rows keep `provider = 'replicate'` as history. Relevant for
-        // workspaces seeded from legacy `generations/*.json` sidecars, which can
-        // still carry this old value.
-        conn.execute(
-            "UPDATE generations SET status = 'failed', error = 'Replicate provider was removed'
-             WHERE provider = 'replicate' AND status IN ('queued', 'pending')",
-            [],
-        )
-        .map_err(|e| format!("Failed to fail orphaned replicate generations: {}", e))?;
-
-        // The "cloud" provider was renamed to "recraftory" (same backend, new
-        // name). Same rationale as above — legacy sidecar imports can carry it.
-        conn.execute(
-            "UPDATE generations SET provider = 'recraftory' WHERE provider = 'cloud'",
-            [],
-        )
-        .map_err(|e| format!("Failed to migrate cloud generations: {}", e))?;
-
-        // Index on the source link, created after the column is guaranteed to exist.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_generations_source ON generations(source_id)",
-            [],
-        )
-        .map_err(|e| format!("Failed to create index: {}", e))?;
-
-        // Backfill stable ids for image rows created before the `id` column
-        // existed. rusqlite has no SQL uuid function, so generate one per row in
-        // Rust. New generations only reference images by this id, so old rows need
-        // one to be linkable as a source going forward.
-        Self::backfill_image_ids(conn)?;
-
-        Ok(())
-    }
-
-    /// Assign a fresh uuid to every image row still missing an `id` (post-migration
-    /// backfill). Idempotent: rows that already have an id are left untouched.
-    fn backfill_image_ids(conn: &Connection) -> Result<(), String> {
-        let paths: Vec<String> = {
-            let mut stmt = conn
-                .prepare("SELECT path FROM images WHERE id IS NULL OR id = ''")
-                .map_err(|e| format!("Failed to prepare backfill query: {}", e))?;
-            let rows = stmt
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|e| format!("Failed to query images for backfill: {}", e))?
-                .filter_map(|r| r.ok())
-                .collect();
-            rows
-        };
-        for path in paths {
-            let id = uuid::Uuid::new_v4().to_string();
-            conn.execute(
-                "UPDATE images SET id = ?1 WHERE path = ?2",
-                params![id, path],
-            )
-            .map_err(|e| format!("Failed to backfill image id: {}", e))?;
-        }
         Ok(())
     }
 
@@ -155,7 +84,7 @@ impl WorkspaceDb {
             |row| {
                 Ok(ImageEntry {
                     path: row.get(0)?,
-                    id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    id: row.get(1)?,
                     filename: row.get(2)?,
                     title: row.get(3)?,
                     created_at: row.get(4)?,
@@ -185,7 +114,7 @@ impl WorkspaceDb {
             .query_map([], |row| {
                 Ok(ImageEntry {
                     path: row.get(0)?,
-                    id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    id: row.get(1)?,
                     filename: row.get(2)?,
                     title: row.get(3)?,
                     created_at: row.get(4)?,
