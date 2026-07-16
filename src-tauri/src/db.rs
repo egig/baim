@@ -221,21 +221,25 @@ impl WorkspaceDb {
         Ok(records)
     }
 
-    /// The oldest `queued` generations (FIFO), up to `limit`. Drained by
-    /// `submit_queued`, which promotes each to `pending` by submitting it to the
-    /// provider. `input_data_uri` is empty for queued rows (the source is read
-    /// from disk at submit time via `source_id`).
-    pub fn list_queued(&self, limit: usize) -> Result<Vec<Generation>, String> {
+    /// Every `queued` generation, oldest first (FIFO). Drained by
+    /// `submit_queued`, which groups same-source rows together before
+    /// promoting each group to `pending` by submitting it to the provider.
+    /// `input_data_uri` is empty for queued rows (the source is read from
+    /// disk at submit time via `source_id`). Unbounded: queue depth is small
+    /// and user-driven (a handful to a few dozen jobs at once), so grouping
+    /// needs to see the whole queued set before deciding which groups to
+    /// take this tick, not just an arbitrary row-count prefix of it.
+    pub fn list_queued_all(&self) -> Result<Vec<Generation>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at
-                 FROM generations WHERE status = 'queued' ORDER BY created_at ASC LIMIT ?1",
+                 FROM generations WHERE status = 'queued' ORDER BY created_at ASC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
         let records = stmt
-            .query_map(params![limit as i64], |row| {
+            .query_map([], |row| {
                 Ok(Generation {
                     id: row.get(0)?,
                     prompt: row.get(1)?,

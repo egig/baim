@@ -181,6 +181,72 @@ fn find_error_message(v: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Whether an object is itself a per-item result entry: it has an echoed
+/// `metadata.key`. Entries live somewhere under the response's
+/// `inlinedResponses`/`inlined_responses`, but the exact wrapper nesting
+/// isn't load-bearing here — deliberately not hardcoded to one guessed path,
+/// same spirit as this file's other recursive `find_*` helpers, since a
+/// wrong path guess would silently fall through to matching nothing (see
+/// below) rather than error loudly.
+fn entry_key(v: &serde_json::Value) -> Option<&str> {
+    v.get("metadata")?.get("key")?.as_str()
+}
+
+/// Recursively finds the per-item entry whose echoed `metadata.key` matches
+/// `key`, searching the whole response tree rather than assuming one exact
+/// wrapper path.
+fn find_by_metadata_key<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    match v {
+        serde_json::Value::Object(map) => {
+            if entry_key(v) == Some(key) {
+                return Some(v);
+            }
+            map.values().find_map(|val| find_by_metadata_key(val, key))
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(|val| find_by_metadata_key(val, key)),
+        _ => None,
+    }
+}
+
+/// Collects every per-item entry (anything with a `metadata.key`) found
+/// anywhere in the tree, for the single-item fallback below.
+fn collect_metadata_entries<'a>(v: &'a serde_json::Value, out: &mut Vec<&'a serde_json::Value>) {
+    match v {
+        serde_json::Value::Object(map) => {
+            if entry_key(v).is_some() {
+                out.push(v);
+            }
+            for val in map.values() {
+                collect_metadata_entries(val, out);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for val in arr {
+                collect_metadata_entries(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Picks out one item's entry from a batch response by its echoed
+/// `metadata.key`. Single-item jobs (including every job created before
+/// per-item keys existed, whose key is always `"variant"`) fall back to the
+/// sole entry found anywhere, regardless of its key, since there's nothing
+/// else it could be — this is what makes it safe for a job with exactly one
+/// item even though its key will never match `key` (a real generation id).
+fn find_inlined_entry<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    if let Some(entry) = find_by_metadata_key(v, key) {
+        return Some(entry);
+    }
+    let mut entries = Vec::new();
+    collect_metadata_entries(v, &mut entries);
+    if entries.len() == 1 {
+        return entries.into_iter().next();
+    }
+    None
+}
+
 // ---- HTTP calls ----
 
 async fn try_create(
@@ -248,6 +314,74 @@ async fn try_create(
     })
 }
 
+/// Builds the batch payload for one or more `(key, GenerateRequest)` items,
+/// one `InlineRequest` each tagged with its own `metadata.key` (used later by
+/// `find_inlined_entry` to pick its result back out of the response).
+fn build_payload(items: Vec<(String, GenerateRequest)>) -> Result<CreateBatchRequest, String> {
+    let mut requests = Vec::with_capacity(items.len());
+    for (key, req) in items {
+        let (mime_type, data) = parse_data_uri(&req.image_data_uri)?;
+        requests.push(InlineRequest {
+            request: GenerateContentRequest {
+                contents: vec![Content {
+                    parts: vec![
+                        Part::Text { text: req.prompt },
+                        Part::Inline {
+                            inline_data: InlineData { mime_type, data },
+                        },
+                    ],
+                }],
+                generation_config: GenerationConfig {
+                    response_modalities: vec!["TEXT", "IMAGE"],
+                },
+            },
+            metadata: RequestMetadata { key },
+        });
+    }
+
+    Ok(CreateBatchRequest {
+        batch: Batch {
+            display_name: "SABI".to_string(),
+            input_config: InputConfig {
+                requests: RequestList { requests },
+            },
+        },
+    })
+}
+
+/// POSTs a batch payload (one or many items), retrying transient failures
+/// with exponential backoff. Shared by `create` and `create_batch` — the
+/// payload's item count is the only difference between them.
+async fn submit_with_retries(
+    api_key: &str,
+    payload: &CreateBatchRequest,
+) -> Result<CreateOutcome, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let mut last_err = String::new();
+    for attempt in 1..=MAX_ATTEMPTS {
+        match try_create(&client, api_key, payload).await {
+            Ok(outcome) => return Ok(outcome),
+            Err(AttemptError::Fatal(msg)) => return Err(msg),
+            Err(AttemptError::Retryable(msg)) => {
+                last_err = msg;
+                if attempt < MAX_ATTEMPTS {
+                    let backoff = std::time::Duration::from_secs(2u64 << (attempt - 1));
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Gemini unavailable after {} attempts: {}",
+        MAX_ATTEMPTS, last_err
+    ))
+}
+
 fn extract_image(v: &serde_json::Value) -> Result<(Vec<u8>, String), String> {
     let (data, mime) = find_inline_image(v).ok_or_else(|| {
         let text = find_text(v).unwrap_or_else(|| "no image in batch response".to_string());
@@ -275,65 +409,24 @@ impl ImageProvider for GoogleProvider {
     }
 
     async fn create(&self, req: GenerateRequest) -> Result<CreateOutcome, String> {
-        let (mime_type, data) = parse_data_uri(&req.image_data_uri)?;
-
-        let payload = CreateBatchRequest {
-            batch: Batch {
-                display_name: "SABI".to_string(),
-                input_config: InputConfig {
-                    requests: RequestList {
-                        requests: vec![InlineRequest {
-                            request: GenerateContentRequest {
-                                contents: vec![Content {
-                                    parts: vec![
-                                        Part::Text {
-                                            text: req.prompt.clone(),
-                                        },
-                                        Part::Inline {
-                                            inline_data: InlineData { mime_type, data },
-                                        },
-                                    ],
-                                }],
-                                generation_config: GenerationConfig {
-                                    response_modalities: vec!["TEXT", "IMAGE"],
-                                },
-                            },
-                            metadata: RequestMetadata {
-                                key: "variant".to_string(),
-                            },
-                        }],
-                    },
-                },
-            },
-        };
-
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-
-        let mut last_err = String::new();
-        for attempt in 1..=MAX_ATTEMPTS {
-            match try_create(&client, &req.api_key, &payload).await {
-                Ok(outcome) => return Ok(outcome),
-                Err(AttemptError::Fatal(msg)) => return Err(msg),
-                Err(AttemptError::Retryable(msg)) => {
-                    last_err = msg;
-                    if attempt < MAX_ATTEMPTS {
-                        let backoff = std::time::Duration::from_secs(2u64 << (attempt - 1));
-                        tokio::time::sleep(backoff).await;
-                    }
-                }
-            }
-        }
-
-        Err(format!(
-            "Gemini unavailable after {} attempts: {}",
-            MAX_ATTEMPTS, last_err
-        ))
+        let api_key = req.api_key.clone();
+        let payload = build_payload(vec![("variant".to_string(), req)])?;
+        submit_with_retries(&api_key, &payload).await
     }
 
-    async fn poll(&self, poll_url: &str, api_key: &str) -> Result<PollOutcome, String> {
+    async fn create_batch(
+        &self,
+        items: Vec<(String, GenerateRequest)>,
+    ) -> Result<CreateOutcome, String> {
+        let api_key = items
+            .first()
+            .map(|(_, req)| req.api_key.clone())
+            .ok_or("create_batch called with no items")?;
+        let payload = build_payload(items)?;
+        submit_with_retries(&api_key, &payload).await
+    }
+
+    async fn poll(&self, poll_url: &str, api_key: &str, key: &str) -> Result<PollOutcome, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
@@ -377,14 +470,19 @@ impl ImageProvider for GoogleProvider {
         }
 
         if done || ends("SUCCEEDED") {
-            return match extract_image(&parsed) {
+            // Scope to this row's own entry when the response is per-item
+            // shaped (a batch of >1); falls back to the whole document (this
+            // row's own job, or an unrecognized shape) via `unwrap_or`, so
+            // this can't regress below the old whole-document search.
+            let scope = find_inlined_entry(&parsed, key).unwrap_or(&parsed);
+            return match extract_image(scope) {
                 Ok((image_bytes, ext)) => Ok(PollOutcome::Done {
                     image_bytes,
                     ext,
                     logs: None,
                 }),
                 Err(msg) => Ok(PollOutcome::Failed {
-                    error: error.unwrap_or(msg),
+                    error: find_error_message(scope).or(error).unwrap_or(msg),
                     logs: None,
                 }),
             };

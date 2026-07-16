@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::db::WorkspaceDb;
@@ -59,19 +61,22 @@ pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
     db.clear_queued()
 }
 
-/// Drain the queue: promote up to `limit` of the oldest `queued` rows to
-/// `pending` by submitting them to their provider. Called each poll tick by the
-/// frontend with `limit = k - in_flight` (`k` is the frontend's adaptive
-/// concurrency target), so in-flight jobs never exceed it. Submissions are
-/// independent network calls (each provider `create` request is a separate
-/// HTTP round-trip), so they run concurrently via `join_all` rather than
-/// paying `limit` round-trips back to back — `db`/`registry` are only touched
-/// synchronously between `.await` points, never held across one, so
-/// interleaving them here is safe. Failures (bad key, missing source,
-/// provider error) mark that row `failed` without aborting the rest; a
-/// rate-limited submission instead reverts its row to `queued` (see
-/// `submit_one`) and is reflected in the returned `rate_limited` flag rather
-/// than as a failure.
+/// Drain the queue: pack `queued` rows into provider-homogeneous batches (see
+/// `pack_into_batches`) and promote up to `limit` of them to `pending` by
+/// submitting each as one request to its provider — a batch of any size
+/// counts as 1 toward `limit`, since it's genuinely one HTTP call (a Gemini
+/// batch request covering every prompt in it, see `do_submit_group`) rather
+/// than one per row. Called each poll tick by the frontend with
+/// `limit = k - in_flight` (`k` is the frontend's adaptive concurrency
+/// target), so in-flight *requests* never exceed it regardless of how many
+/// rows they cover. Groups are submitted concurrently via `join_all` rather
+/// than back to back — `db`/`registry` are only touched synchronously between
+/// `.await` points, never held across one, so interleaving them here is safe.
+/// Failures (bad key, missing source, provider error) mark every row in that
+/// group `failed` without aborting the rest; a rate-limited submission
+/// instead reverts every row in that group to `queued` (see `submit_one`/
+/// `submit_group`) and is reflected in the returned `rate_limited` flag
+/// rather than as a failure.
 /// The result of a `submit_queued` drain pass: the advanced records, plus
 /// whether any submission in the batch was rate-limited by its provider.
 /// Drives the frontend's adaptive concurrency (AIMD) backoff.
@@ -92,18 +97,82 @@ pub async fn submit_queued(
             rate_limited: false,
         });
     }
-    let queued = db.list_queued(limit)?;
-    let results = futures_util::future::join_all(queued.into_iter().map(|mut record| async move {
-        let rate_limited = submit_one(registry, db, &mut record).await;
-        (record, rate_limited)
+    let batches = pack_into_batches(db, db.list_queued_all()?)
+        .into_iter()
+        .take(limit);
+
+    let results = futures_util::future::join_all(batches.map(|group| async move {
+        if group.len() == 1 {
+            let mut record = group.into_iter().next().unwrap();
+            let rate_limited = submit_one(registry, db, &mut record).await;
+            (vec![record], rate_limited)
+        } else {
+            submit_group(registry, db, group).await
+        }
     }))
     .await;
+
     let rate_limited = results.iter().any(|(_, rl)| *rl);
-    let generations = results.into_iter().map(|(record, _)| record).collect();
+    let generations = results.into_iter().flat_map(|(recs, _)| recs).collect();
     Ok(SubmitOutcome {
         generations,
         rate_limited,
     })
+}
+
+/// Conservative budget under Gemini's ~20MB inline-batch-request cap, leaving
+/// headroom both for JSON structure/prompt text and for `estimate_payload_bytes`
+/// being an approximation rather than an exact encode.
+const BATCH_PAYLOAD_BUDGET_BYTES: u64 = 18 * 1024 * 1024;
+
+/// Rough base64-encoded size of a row's source image (its on-disk
+/// `size_bytes` × 4/3 for base64 inflation) — used only to decide how many
+/// rows can share one batch call, so it doesn't need to be exact. A row whose
+/// image can't be found estimates as 0 rather than blocking packing; it'll
+/// surface a clear error at actual submission time instead.
+fn estimate_payload_bytes(db: &WorkspaceDb, record: &Generation) -> u64 {
+    record
+        .source_id
+        .as_deref()
+        .and_then(|id| db.find_image_by_id(id))
+        .map(|image| image.size_bytes * 4 / 3)
+        .unwrap_or(0)
+}
+
+/// Packs queued rows into provider-homogeneous batches, greedily filling each
+/// toward `BATCH_PAYLOAD_BUDGET_BYTES` (first-fit; queue depth is small and
+/// user-driven, so optimal bin-packing isn't worth the complexity). Provider
+/// is the only hard boundary a batch can't cross — one request means one
+/// endpoint/auth key. Source image is *not* a boundary: each row's image
+/// travels inline with its own item (see `do_submit_group`), so rows for
+/// different images can freely share one call — which is what lets a batch
+/// actually fill toward the payload budget instead of stopping at however
+/// many rows one image happens to have queued.
+fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Generation>> {
+    struct Batch {
+        provider: String,
+        records: Vec<Generation>,
+        bytes: u64,
+    }
+    let mut batches: Vec<Batch> = Vec::new();
+    for record in records {
+        let size = estimate_payload_bytes(db, &record);
+        let fit = batches.iter_mut().find(|b| {
+            b.provider == record.provider && b.bytes + size <= BATCH_PAYLOAD_BUDGET_BYTES
+        });
+        match fit {
+            Some(batch) => {
+                batch.bytes += size;
+                batch.records.push(record);
+            }
+            None => batches.push(Batch {
+                provider: record.provider.clone(),
+                bytes: size,
+                records: vec![record],
+            }),
+        }
+    }
+    batches.into_iter().map(|b| b.records).collect()
 }
 
 /// Submit one queued row, always persisting the outcome. A rate-limited
@@ -127,6 +196,93 @@ async fn submit_one(registry: &RegistryDb, db: &WorkspaceDb, record: &mut Genera
     false
 }
 
+/// Submit a group of ≥2 queued rows sharing one provider + source image as a
+/// single batch request (`ImageProvider::create_batch`), reading the source
+/// image once rather than once per row. On success every row gets the same
+/// `poll_url`. On a rate limit every row reverts to `queued`, same contract
+/// as `submit_one`'s single-row case (one `rate_limited` signal for the whole
+/// group). Any other error marks every row `failed` with that message, since
+/// the batch genuinely never got submitted — there's no partial outcome to
+/// preserve at this stage (that only happens once results come back via
+/// `poll`).
+async fn submit_group(
+    registry: &RegistryDb,
+    db: &WorkspaceDb,
+    mut records: Vec<Generation>,
+) -> (Vec<Generation>, bool) {
+    match do_submit_group(registry, db, &records).await {
+        Ok(CreateOutcome::Pending { poll_url }) => {
+            for record in &mut records {
+                record.status = "pending".to_string();
+                record.poll_url = Some(poll_url.clone());
+                record.error = None;
+                let _ = db.upsert_generation(record);
+            }
+            (records, false)
+        }
+        Ok(CreateOutcome::Done { image_bytes, ext }) => {
+            // No batching-capable provider is synchronous today, but handle
+            // it: every row in the group shares the same result.
+            for record in &mut records {
+                let _ = save_generated_image(db, record, &image_bytes, &ext);
+            }
+            (records, false)
+        }
+        Err(err) if err == RATE_LIMITED_ERROR => {
+            for record in &mut records {
+                record.status = "queued".to_string();
+                record.poll_url = None;
+                let _ = db.upsert_generation(record);
+            }
+            (records, true)
+        }
+        Err(err) => {
+            for record in &mut records {
+                record.status = "failed".to_string();
+                record.error = Some(err.clone());
+                record.poll_url = None;
+                let _ = db.upsert_generation(record);
+            }
+            (records, false)
+        }
+    }
+}
+
+/// A provider's resolved auth for one submission: its API key, plus (for
+/// meta-providers like recraftory) the downstream provider's key forwarded
+/// alongside it. Shared by every row in a group — auth is a per-provider
+/// concern, not a per-image one.
+struct ProviderAuth {
+    api_key: String,
+    provider_api_key: Option<String>,
+}
+
+fn resolve_provider_auth(registry: &RegistryDb, provider_id: &str) -> Result<ProviderAuth, String> {
+    let api_key = registry
+        .read_api_key(provider_id)
+        .ok_or_else(|| format!("No API key set for {}", provider_id))?;
+
+    // Meta-providers (recraftory) need the downstream provider's API key too.
+    let provider_api_key = if provider_id == "recraftory" {
+        registry.read_api_key("google")
+    } else {
+        None
+    };
+
+    Ok(ProviderAuth {
+        api_key,
+        provider_api_key,
+    })
+}
+
+/// Reads a saved source image and encodes it as a `data:` URI, by id.
+fn resolve_image_data_uri(db: &WorkspaceDb, source_id: &str) -> Result<String, String> {
+    let image = db
+        .find_image_by_id(source_id)
+        .ok_or("Source image no longer exists")?;
+    read_image_as_data_uri(&image.path)
+}
+
 async fn do_submit(
     registry: &RegistryDb,
     db: &WorkspaceDb,
@@ -134,33 +290,19 @@ async fn do_submit(
 ) -> Result<(), String> {
     let provider = get_provider(&record.provider)
         .ok_or_else(|| format!("Unknown provider: {}", record.provider))?;
-
-    let api_key = registry
-        .read_api_key(&record.provider)
-        .ok_or_else(|| format!("No API key set for {}", record.provider))?;
-
-    // Meta-providers (recraftory) need the downstream provider's API key too.
-    let provider_api_key = if record.provider == "recraftory" {
-        registry.read_api_key("google")
-    } else {
-        None
-    };
-
+    let auth = resolve_provider_auth(registry, &record.provider)?;
     let source_id = record
         .source_id
         .as_deref()
         .ok_or("Queued generation has no source image")?;
-    let image = db
-        .find_image_by_id(source_id)
-        .ok_or("Source image no longer exists")?;
-    let data_uri = read_image_as_data_uri(&image.path)?;
+    let data_uri = resolve_image_data_uri(db, source_id)?;
 
     let outcome = provider
         .create(GenerateRequest {
             prompt: record.prompt.clone(),
             image_data_uri: data_uri,
-            api_key,
-            provider_api_key,
+            api_key: auth.api_key,
+            provider_api_key: auth.provider_api_key,
         })
         .await?;
 
@@ -177,6 +319,51 @@ async fn do_submit(
             save_generated_image(db, record, &image_bytes, &ext)
         }
     }
+}
+
+/// Batch-submit variant of `do_submit`: resolves auth once for the whole
+/// group, then builds one `(id, GenerateRequest)` item per row. A group can
+/// now span multiple source images (see `pack_into_batches`), so each row's
+/// image is resolved individually — cached by `source_id` so rows that do
+/// share an image (the common "N templates × one image" case) still only pay
+/// for one read.
+async fn do_submit_group(
+    registry: &RegistryDb,
+    db: &WorkspaceDb,
+    records: &[Generation],
+) -> Result<CreateOutcome, String> {
+    let first = records.first().ok_or("Empty submission group")?;
+    let provider = get_provider(&first.provider)
+        .ok_or_else(|| format!("Unknown provider: {}", first.provider))?;
+    let auth = resolve_provider_auth(registry, &first.provider)?;
+
+    let mut image_cache: HashMap<String, String> = HashMap::new();
+    let mut items = Vec::with_capacity(records.len());
+    for record in records {
+        let source_id = record
+            .source_id
+            .as_deref()
+            .ok_or("Queued generation has no source image")?;
+        let data_uri = match image_cache.get(source_id) {
+            Some(cached) => cached.clone(),
+            None => {
+                let uri = resolve_image_data_uri(db, source_id)?;
+                image_cache.insert(source_id.to_string(), uri.clone());
+                uri
+            }
+        };
+        items.push((
+            record.id.clone(),
+            GenerateRequest {
+                prompt: record.prompt.clone(),
+                image_data_uri: data_uri,
+                api_key: auth.api_key.clone(),
+                provider_api_key: auth.provider_api_key.clone(),
+            },
+        ));
+    }
+
+    provider.create_batch(items).await
 }
 
 /// Read a saved image file and encode it as a `data:` URI for the provider,
@@ -226,7 +413,7 @@ pub async fn refresh_generation(
         .clone()
         .ok_or("This generation has no poll URL to refresh")?;
 
-    match provider.poll(&poll_url, &api_key).await? {
+    match provider.poll(&poll_url, &api_key, &record.id).await? {
         PollOutcome::Pending { logs } => {
             // Still running: persist the latest logs so the detail panel updates
             // live. Only write when they actually changed to avoid a needless

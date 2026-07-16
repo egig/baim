@@ -53,7 +53,30 @@ pub struct ProviderInfo {
 pub trait ImageProvider: Send + Sync {
     fn info(&self) -> ProviderInfo;
     async fn create(&self, req: GenerateRequest) -> Result<CreateOutcome, String>;
-    async fn poll(&self, poll_url: &str, api_key: &str) -> Result<PollOutcome, String>;
+
+    /// Submit multiple requests as a single batch job sharing one poll URL,
+    /// for providers whose backend supports true batching. Each item is
+    /// tagged with its own `key`, later used by `poll` to pick its result out
+    /// of a multi-item response. Default: only meaningful for exactly one
+    /// item (delegates to `create`); providers that can't batch return `Err`
+    /// for more, rather than silently splitting into separate jobs (which
+    /// would break the "one poll_url for the whole group" contract callers
+    /// rely on).
+    async fn create_batch(
+        &self,
+        mut items: Vec<(String, GenerateRequest)>,
+    ) -> Result<CreateOutcome, String> {
+        if items.len() == 1 {
+            let (_, req) = items.pop().unwrap();
+            return self.create(req).await;
+        }
+        Err("Batched generation not supported by this provider".to_string())
+    }
+
+    /// `key` identifies which request's result to extract when `poll_url`
+    /// points at a multi-item batch job (see `create_batch`); providers that
+    /// never batch can ignore it.
+    async fn poll(&self, poll_url: &str, api_key: &str, key: &str) -> Result<PollOutcome, String>;
 }
 
 /// The identifier assumed when none is stored (existing rows, fresh installs).

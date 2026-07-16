@@ -76,7 +76,7 @@ impl ImageProvider for RecraftoryProvider {
         })
     }
 
-    async fn poll(&self, poll_url: &str, api_key: &str) -> Result<PollOutcome, String> {
+    async fn poll(&self, poll_url: &str, api_key: &str, _key: &str) -> Result<PollOutcome, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
