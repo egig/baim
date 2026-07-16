@@ -127,11 +127,11 @@ export function AssetGrid({
         >
           <div style={{ fontSize: 13, color: "var(--ink-500)" }}>Belum ada aset.</div>
           <div style={{ fontSize: 12 }}>
-            Unggah gambar produk untuk membuat varian pertama.
+            Import gambar produk untuk membuat varian pertama.
           </div>
           <div style={{ marginTop: 4 }}>
             <Button variant="primary" onClick={onUploadClick}>
-              Unggah gambar
+              Import gambar
             </Button>
           </div>
         </div>

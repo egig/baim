@@ -158,7 +158,7 @@ export function AssetToolbar({
 
       <Button variant="outline" onClick={onUploadClick}>
         <IconUpload size={14} color="var(--ink-700)" stroke={1.3} />
-        Unggah gambar
+        Import gambar
       </Button>
     </div>
   );
