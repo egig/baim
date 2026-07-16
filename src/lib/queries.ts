@@ -53,6 +53,18 @@ export function setConcurrencyCeiling(value: number): void {
   k = Math.min(k, ceiling);
 }
 
+/** Applies the same AIMD backoff a rate-limited `SubmitOutcome` triggers
+ *  below, but callable from anywhere a rate limit is observed — including
+ *  out-of-band, via the `generation-rate-limited` Tauri event a detached
+ *  Interactions-mode task emits (see `root.tsx`) when it hits a 429 after
+ *  its own `submit_queued` tick already returned, so it can't ride along in
+ *  that call's `SubmitOutcome.rate_limited` like the synchronous Batch path
+ *  does. */
+export function applyRateLimitSignal(): void {
+  k = Math.max(FLOOR, Math.floor(k / 2));
+  cooldown = COOLDOWN_TICKS;
+}
+
 async function ensureCeilingLoaded(): Promise<void> {
   if (ceilingLoaded) return;
   ceilingLoaded = true; // set eagerly so concurrent ticks don't all fetch
@@ -148,8 +160,7 @@ async function pollAndDrain(): Promise<Generation[]> {
 
     // 3. Adjust the concurrency target based on how this drain went.
     if (result.rate_limited) {
-      k = Math.max(FLOOR, Math.floor(k / 2));
-      cooldown = COOLDOWN_TICKS;
+      applyRateLimitSignal();
     } else if (saturated && cooldown === 0 && k < ceiling) {
       k += 1;
     }

@@ -1,13 +1,34 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 use crate::db::WorkspaceDb;
 use crate::provider::{
-    get_provider, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
+    get_provider, ApiMode, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
     RATE_LIMITED_ERROR,
 };
 use crate::registry::RegistryDb;
+use crate::workspace::WorkspaceHandle;
+
+/// Tauri event emitted when a detached Interactions-mode task (see
+/// `spawn_interaction`) hits a rate limit. Its own `submit_queued` tick has
+/// already returned by the time this happens, so it can't ride along in that
+/// call's `SubmitOutcome.rate_limited` like the synchronous Batch path does —
+/// the frontend listens for this event instead to trigger the same AIMD
+/// backoff (see `src/lib/queries.ts::applyRateLimitSignal`).
+pub const RATE_LIMITED_EVENT: &str = "generation-rate-limited";
+
+/// Normalizes an incoming mode string to one of the two recognized values,
+/// defaulting anything else (including absent/legacy callers) to `"batch"`.
+fn normalize_api_mode(mode: &str) -> &'static str {
+    if mode == "interactions" {
+        "interactions"
+    } else {
+        "batch"
+    }
+}
 
 /// Enqueue a single generation. Inserts a `queued` row referencing its source
 /// image by `source_id` (no inline image data — the bytes are read from disk at
@@ -18,8 +39,20 @@ pub fn create_prediction(
     prompt: &str,
     provider_id: &str,
     source_id: Option<&str>,
+    mode: &str,
 ) -> Result<Generation, String> {
-    let record = new_generation(prompt, "", provider_id, "queued", None, None, None, source_id);
+    let mode = normalize_api_mode(mode);
+    let record = new_generation(
+        prompt,
+        "",
+        provider_id,
+        mode,
+        "queued",
+        None,
+        None,
+        None,
+        source_id,
+    );
     db.upsert_generation(&record)?;
     Ok(record)
 }
@@ -32,19 +65,21 @@ pub fn create_predictions(
     prompts: &[String],
     provider_id: &str,
     source_id: Option<&str>,
+    mode: &str,
 ) -> Result<Vec<Generation>, String> {
     if prompts.is_empty() {
         return Err("No prompts provided".to_string());
     }
     let mut out = Vec::with_capacity(prompts.len());
     for prompt in prompts {
-        out.push(create_prediction(db, prompt, provider_id, source_id)?);
+        out.push(create_prediction(db, prompt, provider_id, source_id, mode)?);
     }
     Ok(out)
 }
 
 /// Re-enqueue an existing generation (typically a `failed` one) as a fresh
-/// `queued` row cloning its source, prompt and provider. Powers per-row Retry.
+/// `queued` row cloning its source, prompt, provider and mode. Powers per-row
+/// Retry.
 pub fn requeue_generation(db: &WorkspaceDb, id: &str) -> Result<Generation, String> {
     let existing = db.load_generation(id).ok_or("Generation not found")?;
     create_prediction(
@@ -52,6 +87,7 @@ pub fn requeue_generation(db: &WorkspaceDb, id: &str) -> Result<Generation, Stri
         &existing.prompt,
         &existing.provider,
         existing.source_id.as_deref(),
+        &existing.api_mode,
     )
 }
 
@@ -87,8 +123,9 @@ pub struct SubmitOutcome {
 }
 
 pub async fn submit_queued(
+    app: &tauri::AppHandle,
     registry: &RegistryDb,
-    db: &WorkspaceDb,
+    ws: Arc<WorkspaceHandle>,
     limit: usize,
 ) -> Result<SubmitOutcome, String> {
     if limit == 0 {
@@ -97,17 +134,21 @@ pub async fn submit_queued(
             rate_limited: false,
         });
     }
-    let batches = pack_into_batches(db, db.list_queued_all()?)
+    let batches = pack_into_batches(&ws.db, ws.db.list_queued_all()?)
         .into_iter()
         .take(limit);
 
-    let results = futures_util::future::join_all(batches.map(|group| async move {
-        if group.len() == 1 {
-            let mut record = group.into_iter().next().unwrap();
-            let rate_limited = submit_one(registry, db, &mut record).await;
-            (vec![record], rate_limited)
-        } else {
-            submit_group(registry, db, group).await
+    let results = futures_util::future::join_all(batches.map(|group| {
+        let ws = ws.clone();
+        let app = app.clone();
+        async move {
+            if group.len() == 1 {
+                let mut record = group.into_iter().next().unwrap();
+                let rate_limited = submit_one(&app, registry, &ws, &mut record).await;
+                (vec![record], rate_limited)
+            } else {
+                submit_group(registry, &ws.db, group).await
+            }
         }
     }))
     .await;
@@ -148,6 +189,14 @@ fn estimate_payload_bytes(db: &WorkspaceDb, record: &Generation) -> u64 {
 /// different images can freely share one call — which is what lets a batch
 /// actually fill toward the payload budget instead of stopping at however
 /// many rows one image happens to have queued.
+///
+/// Interactions-mode rows never join any group (always a singleton of their
+/// own) and nothing ever joins them — `CreateOutcome` has no way to
+/// represent N independent per-row results from one call the way a Batch
+/// job's `poll_url` + per-item `metadata.key` can, so `create_batch` must
+/// never see one. This is what routes every interactions-mode row through
+/// `submit_one`/`do_submit` (and from there into `spawn_interaction`)
+/// instead of `submit_group`.
 fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Generation>> {
     struct Batch {
         provider: String,
@@ -156,9 +205,19 @@ fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Gene
     }
     let mut batches: Vec<Batch> = Vec::new();
     for record in records {
+        if record.api_mode == "interactions" {
+            batches.push(Batch {
+                provider: record.provider.clone(),
+                bytes: 0,
+                records: vec![record],
+            });
+            continue;
+        }
         let size = estimate_payload_bytes(db, &record);
         let fit = batches.iter_mut().find(|b| {
-            b.provider == record.provider && b.bytes + size <= BATCH_PAYLOAD_BUDGET_BYTES
+            b.provider == record.provider
+                && b.records.first().is_some_and(|r| r.api_mode != "interactions")
+                && b.bytes + size <= BATCH_PAYLOAD_BUDGET_BYTES
         });
         match fit {
             Some(batch) => {
@@ -180,18 +239,28 @@ fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Gene
 /// on a later drain rather than dying as a visible failure — and returns
 /// `true`. Any other error is stored as `failed` (with the message) rather
 /// than propagating, so one bad job can't abort a drain pass.
-async fn submit_one(registry: &RegistryDb, db: &WorkspaceDb, record: &mut Generation) -> bool {
-    if let Err(err) = do_submit(registry, db, record).await {
+///
+/// For an interactions-mode row, `do_submit` returns after only checkpointing
+/// the row and spawning its detached task — the real outcome (including any
+/// rate limit) arrives later out of band via `RATE_LIMITED_EVENT`, so this
+/// always returns `false` for that mode; see `spawn_interaction`.
+async fn submit_one(
+    app: &tauri::AppHandle,
+    registry: &RegistryDb,
+    ws: &Arc<WorkspaceHandle>,
+    record: &mut Generation,
+) -> bool {
+    if let Err(err) = do_submit(app, registry, ws, record).await {
         if err == RATE_LIMITED_ERROR {
             record.status = "queued".to_string();
             record.poll_url = None;
-            let _ = db.upsert_generation(record);
+            let _ = ws.db.upsert_generation(record);
             return true;
         }
         record.status = "failed".to_string();
         record.error = Some(err);
         record.poll_url = None;
-        let _ = db.upsert_generation(record);
+        let _ = ws.db.upsert_generation(record);
     }
     false
 }
@@ -284,8 +353,9 @@ fn resolve_image_data_uri(db: &WorkspaceDb, source_id: &str) -> Result<String, S
 }
 
 async fn do_submit(
+    app: &tauri::AppHandle,
     registry: &RegistryDb,
-    db: &WorkspaceDb,
+    ws: &Arc<WorkspaceHandle>,
     record: &mut Generation,
 ) -> Result<(), String> {
     let provider = get_provider(&record.provider)
@@ -295,7 +365,27 @@ async fn do_submit(
         .source_id
         .as_deref()
         .ok_or("Queued generation has no source image")?;
-    let data_uri = resolve_image_data_uri(db, source_id)?;
+    let data_uri = resolve_image_data_uri(&ws.db, source_id)?;
+
+    if record.api_mode == "interactions" {
+        // Checkpoint *before* spawning: `pending` + no poll_url is what
+        // `reconcile_orphaned_interactions` recognizes on the next workspace
+        // open as "was in flight when the app closed" (Batch-mode `pending`
+        // rows always carry a poll_url, so this pairing is unambiguous).
+        record.status = "pending".to_string();
+        record.poll_url = None;
+        record.error = None;
+        ws.db.upsert_generation(record)?;
+        spawn_interaction(
+            app.clone(),
+            ws.clone(),
+            provider,
+            record.clone(),
+            data_uri,
+            auth,
+        );
+        return Ok(());
+    }
 
     let outcome = provider
         .create(GenerateRequest {
@@ -303,6 +393,7 @@ async fn do_submit(
             image_data_uri: data_uri,
             api_key: auth.api_key,
             provider_api_key: auth.provider_api_key,
+            mode: ApiMode::Batch,
         })
         .await?;
 
@@ -311,14 +402,76 @@ async fn do_submit(
             record.status = "pending".to_string();
             record.poll_url = Some(poll_url);
             record.error = None;
-            db.upsert_generation(record)?;
+            ws.db.upsert_generation(record)?;
             Ok(())
         }
         CreateOutcome::Done { image_bytes, ext } => {
             // Synchronous provider: save immediately (sets status `succeeded`).
-            save_generated_image(db, record, &image_bytes, &ext)
+            save_generated_image(&ws.db, record, &image_bytes, &ext)
         }
     }
+}
+
+/// Fires one Interactions-API call as a detached task so the queue drain
+/// (`submit_queued`/the Tauri command it backs) never blocks on a single
+/// synchronous 10-30s generation — parallelism comes from many of these
+/// running concurrently, up to the same AIMD `k` the Batch path already
+/// respects (each spawn counts as one `submit_queued` slot, same as a Batch
+/// group). The task writes its own result to the DB when it completes,
+/// independent of whatever already returned to the caller.
+///
+/// If the whole app closes/crashes while this is in flight, the row stays
+/// checkpointed `pending`/no-poll_url and is silently reset to `queued` by
+/// `reconcile_orphaned_interactions` on the next workspace open — an
+/// accepted, self-healing cost (one wasted call), not a correctness issue.
+fn spawn_interaction(
+    app: tauri::AppHandle,
+    ws: Arc<WorkspaceHandle>,
+    provider: Box<dyn crate::provider::ImageProvider>,
+    mut record: Generation,
+    data_uri: String,
+    auth: ProviderAuth,
+) {
+    tauri::async_runtime::spawn(async move {
+        let result = provider
+            .create(GenerateRequest {
+                prompt: record.prompt.clone(),
+                image_data_uri: data_uri,
+                api_key: auth.api_key,
+                provider_api_key: auth.provider_api_key,
+                mode: ApiMode::Interactions,
+            })
+            .await;
+
+        match result {
+            Ok(CreateOutcome::Done { image_bytes, ext }) => {
+                let _ = save_generated_image(&ws.db, &mut record, &image_bytes, &ext);
+            }
+            Ok(CreateOutcome::Pending { poll_url }) => {
+                // Defensive only — v1's synchronous Interactions call should
+                // never legitimately return Pending (background/streaming
+                // modes are out of scope). Handle it rather than dropping it.
+                record.status = "pending".to_string();
+                record.poll_url = Some(poll_url);
+                let _ = ws.db.upsert_generation(&record);
+            }
+            Err(err) if err == RATE_LIMITED_ERROR => {
+                record.status = "queued".to_string();
+                record.poll_url = None;
+                let _ = ws.db.upsert_generation(&record);
+                // Can't ride along in submit_queued's already-returned
+                // SubmitOutcome (that call returned long ago) — signal the
+                // frontend's AIMD backoff out of band instead.
+                let _ = app.emit(RATE_LIMITED_EVENT, ());
+            }
+            Err(err) => {
+                record.status = "failed".to_string();
+                record.error = Some(err);
+                record.poll_url = None;
+                let _ = ws.db.upsert_generation(&record);
+            }
+        }
+    });
 }
 
 /// Batch-submit variant of `do_submit`: resolves auth once for the whole
@@ -359,6 +512,9 @@ async fn do_submit_group(
                 image_data_uri: data_uri,
                 api_key: auth.api_key.clone(),
                 provider_api_key: auth.provider_api_key.clone(),
+                // Groups are always Batch-mode — `pack_into_batches` never
+                // lets an interactions-mode row join a multi-row group.
+                mode: ApiMode::Batch,
             },
         ));
     }
@@ -398,6 +554,14 @@ pub async fn refresh_generation(
     let mut record = db.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
+        return Ok(record);
+    }
+
+    if record.poll_url.is_none() {
+        // Interactions-mode row still in flight in its spawned task (see
+        // `spawn_interaction`), which writes the eventual result itself.
+        // Nothing to poll — cheap no-op re-load; the frontend's 2s poll tick
+        // picks up the status change once it lands.
         return Ok(record);
     }
 
@@ -638,7 +802,7 @@ fn default_provider() -> String {
 ///   `poll_url` holds the provider's status URL; `output_path`/`error` are `None`.
 /// - `"succeeded"` — `output_path` points at the saved image.
 /// - `"failed"`   — `error` is set; can be retried from the source.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Generation {
     pub id: String,
     pub prompt: String,
@@ -661,7 +825,16 @@ pub struct Generation {
     /// for legacy rows and queued jobs that haven't been submitted yet.
     #[serde(default)]
     pub logs: Option<String>,
+    /// Which call strategy produced (or will produce) this row — `"batch"` or
+    /// `"interactions"`, orthogonal to `provider`. Defaults to `"batch"` for
+    /// legacy rows created before this field existed.
+    #[serde(default = "default_api_mode")]
+    pub api_mode: String,
     pub created_at: i64,
+}
+
+fn default_api_mode() -> String {
+    "batch".to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -669,6 +842,7 @@ fn new_generation(
     prompt: &str,
     input_data_uri: &str,
     provider: &str,
+    api_mode: &str,
     status: &str,
     poll_url: Option<String>,
     output_path: Option<String>,
@@ -691,6 +865,7 @@ fn new_generation(
         error,
         source_id: source_id.map(|s| s.to_string()),
         logs: None,
+        api_mode: api_mode.to_string(),
         created_at,
     }
 }

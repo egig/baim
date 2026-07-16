@@ -56,6 +56,29 @@ impl WorkspaceDb {
         )
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
+        // One-time migration: `api_mode` distinguishes Batch vs Interactions
+        // API rows, orthogonal to `provider` (which vendor). Added after the
+        // table already existed for early installs, so it's not in the
+        // CREATE TABLE above — ALTER TABLE errors if the column is already
+        // there, so guard with PRAGMA table_info rather than re-running
+        // unconditionally.
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(generations)")
+            .map_err(|e| format!("Failed to inspect generations table: {}", e))?;
+        let has_api_mode = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("Failed to inspect generations table: {}", e))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "api_mode");
+        drop(stmt);
+        if !has_api_mode {
+            conn.execute(
+                "ALTER TABLE generations ADD COLUMN api_mode TEXT NOT NULL DEFAULT 'batch'",
+                [],
+            )
+            .map_err(|e| format!("Failed to add api_mode column: {}", e))?;
+        }
+
         Ok(())
     }
 
@@ -131,14 +154,15 @@ impl WorkspaceDb {
     pub fn upsert_generation(&self, gen: &Generation) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO generations (id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, api_mode, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 poll_url = excluded.poll_url,
                 output_path = excluded.output_path,
                 error = excluded.error,
-                logs = excluded.logs",
+                logs = excluded.logs,
+                api_mode = excluded.api_mode",
             params![
                 gen.id,
                 gen.prompt,
@@ -150,6 +174,7 @@ impl WorkspaceDb {
                 gen.error,
                 gen.source_id,
                 gen.logs,
+                gen.api_mode,
                 gen.created_at,
             ],
         )
@@ -160,7 +185,7 @@ impl WorkspaceDb {
     pub fn load_generation(&self, id: &str) -> Option<Generation> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at
+            "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, api_mode, created_at
              FROM generations WHERE id = ?1",
             params![id],
             |row| {
@@ -175,7 +200,8 @@ impl WorkspaceDb {
                     error: row.get(7)?,
                     source_id: row.get(8)?,
                     logs: row.get(9)?,
-                    created_at: row.get(10)?,
+                    api_mode: row.get(10)?,
+                    created_at: row.get(11)?,
                 })
             },
         )
@@ -193,7 +219,7 @@ impl WorkspaceDb {
             .prepare(
                 "SELECT id, prompt,
                         CASE WHEN status = 'pending' THEN input_data_uri ELSE '' END AS input_data_uri,
-                        provider, status, poll_url, output_path, error, source_id, logs, created_at
+                        provider, status, poll_url, output_path, error, source_id, logs, api_mode, created_at
                  FROM generations ORDER BY created_at DESC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -211,7 +237,8 @@ impl WorkspaceDb {
                     error: row.get(7)?,
                     source_id: row.get(8)?,
                     logs: row.get(9)?,
-                    created_at: row.get(10)?,
+                    api_mode: row.get(10)?,
+                    created_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Failed to query generations: {}", e))?
@@ -233,7 +260,7 @@ impl WorkspaceDb {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, created_at
+                "SELECT id, prompt, input_data_uri, provider, status, poll_url, output_path, error, source_id, logs, api_mode, created_at
                  FROM generations WHERE status = 'queued' ORDER BY created_at ASC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -251,7 +278,8 @@ impl WorkspaceDb {
                     error: row.get(7)?,
                     source_id: row.get(8)?,
                     logs: row.get(9)?,
-                    created_at: row.get(10)?,
+                    api_mode: row.get(10)?,
+                    created_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Failed to query queued: {}", e))?
@@ -259,6 +287,23 @@ impl WorkspaceDb {
             .collect();
 
         Ok(records)
+    }
+
+    /// Interactions-mode rows checkpointed `pending`/`poll_url=NULL` right
+    /// before their spawned task started (see `generation.rs::do_submit`),
+    /// but whose task never got to finish — the app closed/crashed mid-flight.
+    /// Batch-mode `pending` rows always carry a poll_url, so this predicate
+    /// unambiguously identifies orphans without needing an `api_mode` filter.
+    /// Resets them to `queued` so the normal drain loop silently re-fires
+    /// them; called once per workspace open.
+    pub fn reconcile_orphaned_interactions(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE generations SET status = 'queued' WHERE status = 'pending' AND poll_url IS NULL",
+            [],
+        )
+        .map_err(|e| format!("Failed to reconcile orphaned interactions: {}", e))?;
+        Ok(())
     }
 
     /// Drop every `queued` generation. Backs the "Clear queue" action; rows that

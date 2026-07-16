@@ -7,40 +7,59 @@ use crate::workspace::{self, active_workspace, AppState, WorkspaceInfo};
 
 /// Enqueue a single generation (status `queued`) referencing its source image by
 /// id. The queue drainer (`submit_queued`) submits it to the provider later.
+/// `mode` selects the call strategy (`"batch"`/`"interactions"`) used once
+/// drained; omitted/unrecognized values default to `"batch"`.
 #[tauri::command]
 pub fn create_prediction(
     state: tauri::State<'_, AppState>,
     prompt: String,
     provider: String,
     source_id: Option<String>,
+    mode: Option<String>,
 ) -> Result<Generation, String> {
     let ws = active_workspace(&state)?;
-    generation::create_prediction(&ws.db, &prompt, &provider, source_id.as_deref())
+    generation::create_prediction(
+        &ws.db,
+        &prompt,
+        &provider,
+        source_id.as_deref(),
+        mode.as_deref().unwrap_or("batch"),
+    )
 }
 
-/// Enqueue one generation per prompt, sharing one source image and provider.
-/// Powers batch (template / bulk) generation.
+/// Enqueue one generation per prompt, sharing one source image, provider and
+/// mode. Powers batch (template / bulk) generation.
 #[tauri::command]
 pub fn create_predictions(
     state: tauri::State<'_, AppState>,
     prompts: Vec<String>,
     provider: String,
     source_id: Option<String>,
+    mode: Option<String>,
 ) -> Result<Vec<Generation>, String> {
     let ws = active_workspace(&state)?;
-    generation::create_predictions(&ws.db, &prompts, &provider, source_id.as_deref())
+    generation::create_predictions(
+        &ws.db,
+        &prompts,
+        &provider,
+        source_id.as_deref(),
+        mode.as_deref().unwrap_or("batch"),
+    )
 }
 
 /// Drain the queue: submit up to `limit` of the oldest `queued` jobs to their
 /// provider, promoting them to `pending`. Called each poll tick with the number
-/// of free in-flight slots so concurrency stays capped.
+/// of free in-flight slots so concurrency stays capped. Takes the `AppHandle`
+/// so interactions-mode submissions (see `generation::spawn_interaction`) can
+/// emit a rate-limit event after this call has already returned.
 #[tauri::command]
 pub async fn submit_queued(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<SubmitOutcome, String> {
     let ws = active_workspace(&state)?;
-    generation::submit_queued(&state.registry, &ws.db, limit).await
+    generation::submit_queued(&app, &state.registry, ws, limit).await
 }
 
 /// Drop every `queued` job ("Clear queue"). In-flight jobs finish.

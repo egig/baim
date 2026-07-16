@@ -85,6 +85,10 @@ fn build_workspace_handle<M: Manager<tauri::Wry>>(
         .map_err(|e| format!("Failed to create .sabi directory: {}", e))?;
     let db = WorkspaceDb::open(&sabi_dir.join("catalog.db"), canonical.to_path_buf())?;
     db.seed_from_disk()?;
+    // Interactions-mode requests still in flight when the app last closed
+    // never got to write their result — reset them to `queued` so the normal
+    // drain loop silently re-fires them (see `reconcile_orphaned_interactions`).
+    db.reconcile_orphaned_interactions()?;
     app.asset_protocol_scope()
         .allow_directory(canonical, true)
         .map_err(|e| format!("Failed to allow workspace directory: {}", e))?;

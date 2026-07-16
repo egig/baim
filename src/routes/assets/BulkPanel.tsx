@@ -1,6 +1,8 @@
 import { Button } from "../../root";
 import { IconSparkles, IconTrash } from "../../lib/icons";
 import { TemplatePicker } from "./TemplatePicker";
+import { Segmented } from "../../components/Segmented";
+import type { ApiMode } from "../../lib/tauri";
 
 /** Right-side panel shown in Select mode once ≥1 image is picked: a template
  *  picker fanned across every selected image (N images × M templates), plus
@@ -10,6 +12,8 @@ export function BulkPanel({
   onClearSelection,
   selectedTemplates,
   onToggleTemplate,
+  mode,
+  onModeChange,
   jobCount,
   generating,
   onGenerateBulk,
@@ -21,6 +25,8 @@ export function BulkPanel({
   onClearSelection: () => void;
   selectedTemplates: Set<string>;
   onToggleTemplate: (id: string) => void;
+  mode: ApiMode;
+  onModeChange: (mode: ApiMode) => void;
   jobCount: number;
   generating: boolean;
   onGenerateBulk: () => void;
@@ -87,9 +93,30 @@ export function BulkPanel({
 
         <div
           style={{
+            fontSize: 10.5,
+            fontWeight: 600,
+            letterSpacing: ".04em",
+            color: "var(--ink-350)",
+            textTransform: "uppercase",
+            marginBottom: 10,
+          }}
+        >
+          Mode generate
+        </div>
+        <Segmented<ApiMode>
+          options={[
+            { value: "batch", label: "Batch" },
+            { value: "interactions", label: "Interactions" },
+          ]}
+          value={mode}
+          onChange={onModeChange}
+        />
+
+        <div
+          style={{
             fontSize: 12,
             color: "var(--ink-500)",
-            marginBottom: 12,
+            margin: "12px 0",
             fontVariantNumeric: "tabular-nums",
           }}
         >

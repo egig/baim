@@ -1,5 +1,18 @@
 use serde::Serialize;
 
+/// Which call strategy a provider should use for a request, orthogonal to
+/// `provider` (which vendor). Currently only meaningful for Google: `Batch`
+/// is the existing async `batchGenerateContent` job (returns a poll URL);
+/// `Interactions` is a synchronous `POST /v1beta/interactions` call (returns
+/// the image directly, never legitimately `Pending` — background/streaming
+/// modes are out of scope). Providers that don't distinguish call strategies
+/// simply ignore this field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiMode {
+    Batch,
+    Interactions,
+}
+
 /// A single image-generation request, normalized across providers. The app only
 /// edits one source image with a text prompt, so that is all a provider needs.
 pub struct GenerateRequest {
@@ -10,6 +23,7 @@ pub struct GenerateRequest {
     /// provider's API key alongside their own auth key. Direct providers
     /// (Google, Local) set this to `None`.
     pub provider_api_key: Option<String>,
+    pub mode: ApiMode,
 }
 
 /// What a provider returns from `create`. Async providers (Google/Gemini) hand

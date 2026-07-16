@@ -10,7 +10,13 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { activeWorkspaceQuery, generationsQuery, isActive } from "./lib/queries";
+import { listen } from "@tauri-apps/api/event";
+import {
+  activeWorkspaceQuery,
+  applyRateLimitSignal,
+  generationsQuery,
+  isActive,
+} from "./lib/queries";
 import Settings from "./routes/settings";
 import Generations from "./routes/generations";
 import { IconX, IconAlignBoxLeftStretch, IconSettings } from "./lib/icons";
@@ -341,6 +347,22 @@ export default function Root() {
     null
   );
   const closeDialog = () => setOpenDialog(null);
+
+  // A detached Interactions-mode task (see generation.rs::spawn_interaction)
+  // can hit a rate limit after its own submit_queued tick already returned,
+  // so it can't ride along in that call's SubmitOutcome like the synchronous
+  // Batch path does — it emits this event instead. No query invalidation
+  // needed here: the reverted row is already persisted before the event
+  // fires, and generationsQuery's own 2s refetchInterval picks it up. This
+  // listener's only job is nudging the in-memory AIMD state.
+  useEffect(() => {
+    const unlisten = listen("generation-rate-limited", () =>
+      applyRateLimitSignal()
+    );
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
 
   const shell = useMemo(
     () => ({

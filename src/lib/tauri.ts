@@ -13,31 +13,43 @@ export interface ImageEntry {
   size_bytes: number;
 }
 
+/** Which call strategy a generation uses, orthogonal to `provider`. `"batch"`
+ *  is Google's existing async Batch API; `"interactions"` is the synchronous
+ *  Interactions API, exposed only as a Bulk Panel toggle today. */
+export type ApiMode = "batch" | "interactions";
+
 /** Enqueue a single generation (status `queued`) referencing its source image by
- *  id. The queue drainer submits it to the provider later. */
+ *  id. The queue drainer submits it to the provider later. `mode` defaults to
+ *  `"batch"` so existing (single-image) call sites are unaffected. */
 export async function createPrediction(
   prompt: string,
   provider: string,
-  sourceId?: string
+  sourceId?: string,
+  mode: ApiMode = "batch"
 ): Promise<Generation> {
   return invoke<Generation>("create_prediction", {
     prompt,
     provider,
     sourceId: sourceId ?? null,
+    mode,
   });
 }
 
 /** Enqueue one generation per prompt in a single backend call, sharing one
- *  source image and provider. Powers batch (template / bulk) generation. */
+ *  source image, provider and mode. Powers batch (template / bulk)
+ *  generation. `mode` defaults to `"batch"` so existing call sites are
+ *  unaffected. */
 export async function createPredictions(
   prompts: string[],
   provider: string,
-  sourceId?: string
+  sourceId?: string,
+  mode: ApiMode = "batch"
 ): Promise<Generation[]> {
   return invoke<Generation[]>("create_predictions", {
     prompts,
     provider,
     sourceId: sourceId ?? null,
+    mode,
   });
 }
 
@@ -99,6 +111,9 @@ export interface Generation {
   /** The provider's latest log blob, refreshed on every poll. Google's Batch
    *  API has none (null). Null for legacy/queued rows. */
   logs: string | null;
+  /** Which call strategy produced (or will produce) this row. Defaults to
+   *  `"batch"` for legacy rows. */
+  api_mode: ApiMode;
   created_at: number;
 }
 

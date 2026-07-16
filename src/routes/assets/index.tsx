@@ -15,6 +15,7 @@ import {
   getActiveProvider,
   listProviders,
   hasApiKey,
+  type ApiMode,
   type Generation,
   type ImageEntry,
 } from "../../lib/tauri";
@@ -195,6 +196,11 @@ export default function Assets() {
   // becomes a bulk template picker that fans out across every selected image.
   const [selectMode, setSelectMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  // Batch vs Interactions API for bulk generation only (single-image flows
+  // below always use Batch implicitly). Ephemeral — always starts at
+  // "batch", never persisted, so a leftover choice can't leak into an
+  // unrelated later bulk run.
+  const [bulkMode, setBulkMode] = useState<ApiMode>("batch");
 
   const [variantPrompt, setVariantPrompt] = useState("");
   const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(
@@ -273,6 +279,7 @@ export default function Assets() {
     setSelectedPaths(new Set());
     setSelectedTemplates(new Set());
     setSelectedPath(null);
+    setBulkMode("batch");
     setError(null);
   }
 
@@ -336,10 +343,14 @@ export default function Assets() {
     try {
       // Enqueue and return immediately. The backend records a `queued` row keyed
       // by the source image id; the drainer submits it to the provider later.
+      // Single-image generation defaults to the Interactions API (fast,
+      // synchronous) rather than Batch — unlike Bulk, there's no cost-vs-speed
+      // tradeoff to expose here since it's usually just one request.
       const gen = await createPrediction(
         variantPrompt.trim(),
         providerId,
-        selectedImage?.id
+        selectedImage?.id,
+        "interactions"
       );
       enqueueGenerations([gen]);
       setVariantPrompt("");
@@ -364,11 +375,13 @@ export default function Assets() {
       const prompts = savedTemplates
         .filter((t) => selectedTemplates.has(t.id))
         .map((t) => t.prompt);
-      // One backend call enqueues one queued generation per template.
+      // One backend call enqueues one queued generation per template. Same
+      // Interactions-by-default reasoning as `generate()` above.
       const gens = await createPredictions(
         prompts,
         providerId,
-        selectedImage?.id
+        selectedImage?.id,
+        "interactions"
       );
       enqueueGenerations(gens);
       setSelectedTemplates(new Set());
@@ -406,12 +419,15 @@ export default function Assets() {
       for (const path of selectedPaths) {
         const img = images.find((i) => i.path === path);
         if (!img) continue;
-        all.push(...(await createPredictions(prompts, providerId, img.id)));
+        all.push(
+          ...(await createPredictions(prompts, providerId, img.id, bulkMode))
+        );
       }
       enqueueGenerations(all);
       setSelectMode(false);
       setSelectedPaths(new Set());
       setSelectedTemplates(new Set());
+      setBulkMode("batch");
     } catch (err) {
       setError(String(err));
     } finally {
@@ -545,6 +561,8 @@ export default function Assets() {
             onClearSelection={() => setSelectedPaths(new Set())}
             selectedTemplates={selectedTemplates}
             onToggleTemplate={toggleTemplate}
+            mode={bulkMode}
+            onModeChange={setBulkMode}
             jobCount={bulkJobCount}
             generating={generating}
             onGenerateBulk={generateBulk}
