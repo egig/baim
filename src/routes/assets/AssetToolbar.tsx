@@ -1,14 +1,29 @@
 import { Segmented } from "../../components/Segmented";
 import { Button } from "../../root";
-import { IconLayoutGrid, IconList, IconUpload } from "../../lib/icons";
+import {
+  IconArrowsSort,
+  IconFilter,
+  IconLayoutGrid,
+  IconList,
+  IconUpload,
+} from "../../lib/icons";
 import { SORT_OPTIONS } from "./helpers";
 import type { AssetFilter, AssetView } from "./types";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { DropdownMenu } from "./DropdownMenu";
 import type { WorkspaceInfo } from "../../lib/tauri";
 
-/** Top toolbar for the asset library: workspace switcher, origin filter,
- *  search, sort, grid/list toggle, bulk-select mode, and upload. Purely
- *  controlled — all state lives in the parent route. */
+const FILTER_OPTIONS: { value: AssetFilter; label: string }[] = [
+  { value: "all", label: "Semua" },
+  { value: "source", label: "Sumber" },
+  { value: "ai", label: "AI" },
+  { value: "novariant", label: "Tanpa Varian" },
+];
+
+/** Top toolbar for the asset library: workspace switcher, origin filter and
+ *  sort as two separate dropdown buttons, search, grid/list toggle,
+ *  bulk-select mode, and upload. Purely controlled — all state lives in the
+ *  parent route. */
 export function AssetToolbar({
   activeWorkspace,
   visibleCount,
@@ -81,15 +96,14 @@ export function AssetToolbar({
         {visibleCount}
       </span>
 
-      <Segmented
-        options={[
-          { value: "all", label: "Semua" },
-          { value: "source", label: "Sumber" },
-          { value: "ai", label: "AI" },
-          { value: "novariant", label: "Tanpa Varian" },
-        ]}
+      <DropdownMenu
+        icon={<IconFilter size={13} stroke={1.8} />}
+        idleLabel="Filter"
+        title="Filter asal gambar"
+        options={FILTER_OPTIONS}
         value={filter}
         onChange={onFilterChange}
+        highlightWhenActive={(v) => v !== "all"}
       />
 
       <input
@@ -113,31 +127,14 @@ export function AssetToolbar({
 
       <div style={{ flex: 1 }} />
 
-      <select
-        value={sortValue}
-        onChange={(e) => onSortChange(e.target.value)}
+      <DropdownMenu
+        icon={<IconArrowsSort size={13} stroke={1.8} />}
+        idleLabel={SORT_OPTIONS.find((o) => o.value === sortValue)?.label ?? "Urutkan"}
         title="Urutkan"
-        style={{
-          height: 26,
-          flexShrink: 0,
-          border: "1px solid var(--line-3)",
-          borderRadius: "var(--r-control)",
-          padding: "0 8px",
-          fontFamily: "var(--font-ui)",
-          fontSize: 12,
-          fontWeight: 600,
-          color: "var(--ink-700)",
-          background: "var(--surface-0)",
-          cursor: "pointer",
-          outline: "none",
-        }}
-      >
-        {SORT_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+        options={SORT_OPTIONS}
+        value={sortValue}
+        onChange={onSortChange}
+      />
 
       <Segmented
         options={[

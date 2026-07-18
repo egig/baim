@@ -121,25 +121,52 @@ export function DetailPanel({
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
           Detail aset
         </span>
-        <div
-          onClick={onClose}
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 6,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            color: "var(--ink-400)",
-          }}
-        >
-          <IconX size={12} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting}
+            style={{
+              height: 26,
+              padding: "0 10px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              borderRadius: "var(--r-button)",
+              border: "1px solid var(--line-4)",
+              background: "var(--surface-0)",
+              color: "var(--red-600)",
+              fontFamily: "var(--font-ui)",
+              fontSize: 11.5,
+              fontWeight: 600,
+              lineHeight: 1,
+              cursor: deleting ? "not-allowed" : "pointer",
+              opacity: deleting ? 0.5 : 1,
+            }}
+          >
+            <IconTrash size={12.5} stroke={1.2} />
+            {deleting ? "Menghapus…" : "Hapus aset"}
+          </button>
+          <div
+            onClick={onClose}
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              color: "var(--ink-400)",
+            }}
+          >
+            <IconX size={12} />
+          </div>
         </div>
       </div>
 
-      {/* Scrollable content: preview, metadata, lineage, generated variants,
-          and delete — everything except the "create variant" composer, which
+      {/* Scrollable content: preview, metadata, lineage, and generated
+          variants — everything except the "create variant" composer, which
           stays pinned at the bottom (chat-input style). */}
       <div style={{ flex: 1, overflow: "auto" }}>
         <div style={{ padding: "16px 18px" }}>
@@ -228,6 +255,7 @@ export function DetailPanel({
                     marginTop: 14,
                     display: "flex",
                     flexDirection: "row",
+                    alignItems: "flex-start",
                     gap: 12,
                     padding: 12,
                     borderRadius: "var(--r-control)",
@@ -236,7 +264,7 @@ export function DetailPanel({
                   }}
                 >
                   {sourceImage && (
-                    <div>
+                    <div style={{ flexShrink: 0 }}>
                       <div
                         style={{
                           fontSize: 11.5,
@@ -315,6 +343,10 @@ export function DetailPanel({
                           background: "var(--indigo-100)",
                           borderRadius: "var(--r-control)",
                           padding: "8px 10px",
+                          maxHeight: 120,
+                          overflowY: "auto",
+                          overflowWrap: "anywhere",
+                          whiteSpace: "pre-wrap",
                         }}
                       >
                         {prompt}
@@ -371,15 +403,6 @@ export function DetailPanel({
               )}
             </div>
           )}
-        </div>
-
-        <div style={{ height: 1, background: "var(--line-1)", margin: "2px 0" }} />
-
-        <div style={{ padding: "14px 18px" }}>
-          <Button variant="danger" disabled={deleting} onClick={onDelete}>
-            <IconTrash size={14} color="var(--red-600)" stroke={1.2} />
-            {deleting ? "Menghapus…" : "Hapus aset"}
-          </Button>
         </div>
       </div>
 

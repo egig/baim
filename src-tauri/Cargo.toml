@@ -1,10 +1,10 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "AI image generation & asset library"
+authors = ["egig"]
+license = "UNLICENSED"
+repository = "https://github.com/egig/sabi"
 edition = "2021"
 rust-version = "1.77.2"
 

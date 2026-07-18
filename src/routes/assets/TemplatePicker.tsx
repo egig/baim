@@ -5,6 +5,7 @@ import { templatesQuery } from "../../lib/queries";
 import { toPickerTemplates } from "../../lib/templates";
 import { deleteTemplate, renameTemplate } from "../../lib/tauri";
 import { Dialog } from "../../root";
+import { IconBookmarkPlus } from "../../lib/icons";
 import { TemplateTile } from "./TemplateTile";
 import { useContainerWidth } from "./useContainerWidth";
 
@@ -59,6 +60,33 @@ export function TemplatePicker({
     flexWrap: "wrap",
     gap: GAP,
   };
+
+  if (all.length === 0) {
+    return (
+      <div
+        ref={wrapRef}
+        style={{
+          marginBottom,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          padding: "18px 12px",
+          borderRadius: "var(--r-control)",
+          border: "1px dashed var(--line-3)",
+          background: "var(--fill-1)",
+          textAlign: "center",
+        }}
+      >
+        <IconBookmarkPlus size={16} color="var(--ink-400)" />
+        <span style={{ fontSize: 11.5, color: "var(--ink-500)", lineHeight: 1.45 }}>
+          Belum ada templat. Buat satu lewat "Simpan sebagai templat" pada
+          prompt yang pernah dipakai, atau gunakan tab "Prompt manual".
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div ref={wrapRef} style={{ marginBottom }}>

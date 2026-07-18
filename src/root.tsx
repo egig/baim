@@ -21,6 +21,10 @@ import Settings from "./routes/settings";
 import Generations from "./routes/generations";
 import { IconX, IconAlignBoxLeftStretch, IconSettings } from "./lib/icons";
 
+/** Height of the custom titlebar (drag region + traffic-light space on
+ *  macOS). Full-window overlays sit below this so they never cover it. */
+const TITLEBAR_HEIGHT = 32;
+
 /* ---------- escape layering ---------- */
 
 /** Stack of dismissable layers (dialogs, panels, lightboxes). A single window
@@ -221,6 +225,37 @@ export function Dialog({
   );
 }
 
+/** Full-window panel: covers the entire app window with no dim backdrop,
+ *  instead of floating as a centered box over a scrim. Used for the
+ *  Queue/Generations dialog, which benefits from the extra room. Closes on
+ *  Escape (topmost-layer only); the panel itself owns its own close button. */
+export function FullWindowPanel({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEscapeLayer(onClose);
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: TITLEBAR_HEIGHT,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 900,
+        background: "var(--surface-1)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /* ---------- shell context ---------- */
 
 const ShellContext = createContext<{
@@ -289,7 +324,7 @@ function Titlebar({
     <div
       data-tauri-drag-region
       style={{
-        height: 32,
+        height: TITLEBAR_HEIGHT,
         flexShrink: 0,
         background: "var(--surface-2)",
         borderBottom: "1px solid var(--line-1)",
@@ -406,9 +441,9 @@ export default function Root() {
           </Dialog>
         )}
         {openDialog === "queue" && (
-          <Dialog width="min(1000px, 90vw)" height="80vh" onClose={closeDialog}>
+          <FullWindowPanel onClose={closeDialog}>
             <Generations onClose={closeDialog} />
-          </Dialog>
+          </FullWindowPanel>
         )}
       </div>
     </ShellContext.Provider>
