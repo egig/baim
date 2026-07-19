@@ -1,11 +1,11 @@
 # TODO: Cloud Backend
 
-## Phase 1: Shared Rust Crate (`sabi/`)
+## Phase 1: Shared Rust Crate (`baim/`)
 
-- [x] Create `sabi/Cargo.toml` (workspace member)
-- [x] Move `ImageProvider` trait + types to `sabi/src/provider.rs`
-- [x] Move `GoogleProvider` to `sabi/src/providers/google.rs`
-- [x] Update `src-tauri/` to depend on `sabi`
+- [x] Create `baim/Cargo.toml` (workspace member)
+- [x] Move `ImageProvider` trait + types to `baim/src/provider.rs`
+- [x] Move `GoogleProvider` to `baim/src/providers/google.rs`
+- [x] Update `src-tauri/` to depend on `baim`
 - [x] Strip `src-tauri/src/provider.rs` down to registry + re-exports
 - [x] Make `src-tauri/src/providers/google.rs` a re-export
 - [x] Verify `cargo build` works

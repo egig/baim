@@ -17,7 +17,7 @@ import { IconX, IconLoader2 } from "../lib/icons";
 type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
 
 /** Sentinel error returned by the Recraftory provider when the key's credit
- *  balance is exhausted (sabi::provider::OUT_OF_CREDITS_ERROR). Shown as a
+ *  balance is exhausted (baim::provider::OUT_OF_CREDITS_ERROR). Shown as a
  *  distinct message rather than the raw generic-looking string. */
 const OUT_OF_CREDITS = "OUT_OF_CREDITS";
 

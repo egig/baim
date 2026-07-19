@@ -1,4 +1,4 @@
-use sabi::provider::{
+use baim::provider::{
     CreateOutcome, GenerateRequest, ImageProvider, PollOutcome, ProviderInfo,
     OUT_OF_CREDITS_ERROR,
 };

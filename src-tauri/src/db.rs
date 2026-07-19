@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 use crate::generation::{Generation, ImageEntry};
 
 /// A single workspace's catalog: the `images` and `generations` for one
-/// user-chosen folder. Lives at `<root>/.sabi/catalog.db`. Global settings
+/// user-chosen folder. Lives at `<root>/.baim/catalog.db`. Global settings
 /// (API keys, active provider, the workspace registry itself) are NOT here —
 /// see `RegistryDb`.
 pub struct WorkspaceDb {

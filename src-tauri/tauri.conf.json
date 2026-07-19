@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SABI",
+  "productName": "Baim",
   "version": "0.1.0",
-  "identifier": "com.recraftory.sabi",
+  "identifier": "com.recraftory.baim",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SABI",
+        "title": "Baim",
         "width": 1024,
         "height": 768,
         "minWidth": 720,
@@ -28,7 +28,7 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' asset: http://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/Pictures/sabi-images/**/*"]
+        "scope": ["$HOME/Pictures/baim-images/**/*"]
       }
     }
   },
@@ -39,7 +39,7 @@
     "copyright": "Copyright © 2026 egig",
     "category": "GraphicsAndDesign",
     "shortDescription": "AI image generation & asset library",
-    "longDescription": "SABI is a desktop app for generating AI images and managing them in a local, portable asset catalog.",
+    "longDescription": "Baim is a desktop app for generating AI images and managing them in a local, portable asset catalog.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

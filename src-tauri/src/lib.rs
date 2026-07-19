@@ -7,7 +7,7 @@ mod registry;
 mod templates;
 mod workspace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use registry::RegistryDb;
@@ -17,23 +17,20 @@ use workspace::AppState;
 /// The registry database's stable app-data location (not inside any workspace
 /// folder), so the app always boots even before the user has opened a
 /// workspace. If an older install's `catalog.db` (the pre-workspace single
-/// global catalog) is found and `sabi.db` doesn't exist yet, rename it in
+/// global catalog) is found and `baim.db` doesn't exist yet, rename it in
 /// place — it becomes the registry under its new name, keeping its `settings`
 /// table (API keys, active provider) with zero user-visible migration. Its
 /// old `images`/`generations` rows are left in the file, unused.
-fn registry_db_path() -> PathBuf {
-    let dir = dirs::data_dir()
-        .expect("Could not find data directory")
-        .join("com.recraftory.sabi");
+fn registry_db_path(dir: &Path) -> PathBuf {
     let old = dir.join("catalog.db");
-    let new = dir.join("sabi.db");
+    let new = dir.join("baim.db");
     if new.exists() {
         return new;
     }
     if old.exists() {
         // If the rename fails (permissions, cross-device, etc.) fall back to
         // opening the original file in place rather than risking a fresh,
-        // empty sabi.db that silently orphans existing settings/API keys.
+        // empty baim.db that silently orphans existing settings/API keys.
         return match std::fs::rename(&old, &new) {
             Ok(()) => new,
             Err(_) => old,
@@ -55,11 +52,11 @@ pub fn run() {
                 )?;
             }
 
-            let registry_path = registry_db_path();
-            if let Some(parent) = registry_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .expect("Failed to create app data directory");
-            }
+            let app_dir = dirs::data_dir()
+                .expect("Could not find data directory")
+                .join("com.recraftory.baim");
+            std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
+            let registry_path = registry_db_path(&app_dir);
             let registry =
                 RegistryDb::open(&registry_path).expect("Failed to initialize registry database");
 
@@ -74,9 +71,7 @@ pub fn run() {
             // Template preview images live outside any workspace folder, so
             // they need their own asset-protocol grant (see the per-workspace
             // grant in workspace.rs::build_workspace_handle for the same idea).
-            let templates_dir = templates::templates_dir(
-                registry_path.parent().expect("registry path has no parent"),
-            );
+            let templates_dir = templates::templates_dir(&app_dir);
             std::fs::create_dir_all(&templates_dir)
                 .expect("Failed to create templates directory");
             app.asset_protocol_scope()

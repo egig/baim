@@ -371,7 +371,7 @@ fn build_payload(items: Vec<(String, GenerateRequest)>) -> Result<CreateBatchReq
 
     Ok(CreateBatchRequest {
         batch: Batch {
-            display_name: "SABI".to_string(),
+            display_name: "Baim".to_string(),
             input_config: InputConfig {
                 requests: RequestList { requests },
             },

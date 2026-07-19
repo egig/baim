@@ -655,7 +655,7 @@ fn save_generated_image(
 /// files) keep working without any migration.
 pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join("Pictures").join("sabi-images"))
+    Ok(home.join("Pictures").join("baim-images"))
 }
 
 /// Delete a saved image file and its associated generation record.

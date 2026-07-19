@@ -1,8 +1,8 @@
-# SABI
+# Baim
 
-**S**pecified **A**rtificial **B**atch **I**magery — a desktop app for generating product catalog images using AI.
+A desktop app for generating product catalog images using AI.
 
-Batch-generate image variants from a source photo and text prompts. Pick a model provider (Gemini), configure your API key, upload a product shot, write prompts — SABI handles the rest asynchronously.
+Batch-generate image variants from a source photo and text prompts. Pick a model provider (Gemini), configure your API key, upload a product shot, write prompts — Baim handles the rest asynchronously.
 
 ## Features
 
@@ -32,7 +32,7 @@ Set a Gemini API key in Settings → API Keys, upload an image, write a prompt, 
 | `npm run lint` | oxlint |
 | `npx tauri dev` | Full desktop app |
 | `npx tauri build` | Production bundle |
-| `cargo check -p sabi` | Check shared crate only |
+| `cargo check -p baim` | Check shared crate only |
 
 ### Prerequisites
 
@@ -44,9 +44,9 @@ Set a Gemini API key in Settings → API Keys, upload an image, write a prompt, 
 ## Architecture
 
 ```
-sabi/
+baim/
 ├── src/               React 19 + react-router v8 frontend
-├── sabi/              Shared Rust crate (ImageProvider trait + GoogleProvider)
+├── baim/              Shared Rust crate (ImageProvider trait + GoogleProvider)
 └── src-tauri/         Tauri v2 backend (Rust, SQLite)
 ```
 

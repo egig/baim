@@ -18,7 +18,7 @@ pub struct WorkspaceHandle {
 }
 
 /// Top-level Tauri managed state. `registry` is a single always-open
-/// connection to `sabi.db`. `workspace` is the active workspace, swapped
+/// connection to `baim.db`. `workspace` is the active workspace, swapped
 /// wholesale (never mutated in place) on every `open_workspace` call — an
 /// `Arc` so async commands can clone it out from under the lock and hold it
 /// live across `.await` points without keeping the mutex held.
@@ -26,7 +26,7 @@ pub struct AppState {
     pub registry: RegistryDb,
     pub workspace: Mutex<Arc<WorkspaceHandle>>,
     /// App-wide directory holding copied preview images for saved prompt
-    /// templates (`<app-data>/com.recraftory.sabi/templates/`), registered
+    /// templates (`<app-data>/com.recraftory.baim/templates/`), registered
     /// with the asset protocol scope once at startup.
     pub templates_dir: PathBuf,
 }
@@ -80,10 +80,10 @@ fn build_workspace_handle<M: Manager<tauri::Wry>>(
     app: &M,
     canonical: &Path,
 ) -> Result<WorkspaceHandle, String> {
-    let sabi_dir = canonical.join(".sabi");
-    std::fs::create_dir_all(&sabi_dir)
-        .map_err(|e| format!("Failed to create .sabi directory: {}", e))?;
-    let db = WorkspaceDb::open(&sabi_dir.join("catalog.db"), canonical.to_path_buf())?;
+    let baim_dir = canonical.join(".baim");
+    std::fs::create_dir_all(&baim_dir)
+        .map_err(|e| format!("Failed to create .baim directory: {}", e))?;
+    let db = WorkspaceDb::open(&baim_dir.join("catalog.db"), canonical.to_path_buf())?;
     db.seed_from_disk()?;
     // Interactions-mode requests still in flight when the app last closed
     // never got to write their result — reset them to `queued` so the normal

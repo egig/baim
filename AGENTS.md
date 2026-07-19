@@ -1,8 +1,9 @@
 # AGENTS.md
 
-**Last updated**: 2026-07-12 (VS Code–style multi-workspace model: each opened
-folder gets its own catalog; `sabi.db` is now the app-wide workspace/settings
-registry)
+**Last updated**: 2026-07-19 (Renamed the app from SABI to Baim: crate
+`sabi`→`baim`, app identifier `com.recraftory.sabi`→`com.recraftory.baim`,
+registry `sabi.db`→`baim.db`, per-workspace `.sabi/`→`.baim/`. No migration
+from the old names — this project predates any real install.)
 
 > **Running on Windows?** Read `TODO-WINDOWS.md` first — it lists known
 > Windows-specific issues (title bar config, `\\?\` canonical paths, default
@@ -18,7 +19,7 @@ registry)
 | `npx tauri dev` | Full desktop app (spawns Vite via `beforeDevCommand`) |
 | `npx tauri build` | Production bundle |
 | `cargo check` / `cargo build` | Rust workspace (from repo root) |
-| `cargo check -p sabi` | Shared crate only |
+| `cargo check -p baim` | Shared crate only |
 
 No test suite.
 
@@ -61,12 +62,12 @@ Tauri v2 app, two halves over `invoke()`.
 |---|---|
 | `lib.rs` | Tauri setup: opens the registry DB, resolves the boot workspace, registers commands |
 | `commands.rs` | Thin `#[tauri::command]` pass-throughs |
-| `provider.rs` | Re-exports `ImageProvider` trait + types from `sabi`; provider registry (`all_providers`/`get_provider`) |
-| `providers/google.rs` | Re-export of GoogleProvider from `sabi` |
+| `provider.rs` | Re-exports `ImageProvider` trait + types from `baim`; provider registry (`all_providers`/`get_provider`) |
+| `providers/google.rs` | Re-export of GoogleProvider from `baim` |
 | `providers/recraftory.rs` | `RecraftoryProvider` — REST client to cloud backend (Cloudflare Workers). **TODO: not production-ready**, deliberately excluded from `all_providers()` |
 | `generation.rs` | Provider-agnostic orchestration (`create_prediction`/`refresh_generation`), image save/delete, `ImageEntry`/`Generation` types |
 | `db.rs` | `WorkspaceDb` — SQLite queries for one workspace's `images`/`generations` tables |
-| `registry.rs` | `RegistryDb` — `sabi.db`: global settings (API keys, active provider) + the `workspaces` table |
+| `registry.rs` | `RegistryDb` — `baim.db`: global settings (API keys, active provider) + the `workspaces` table |
 | `workspace.rs` | `AppState`, `WorkspaceHandle`/`WorkspaceInfo`, `open_workspace`/`boot_workspace` — the workspace-switching orchestration |
 
 Commands: `create_prediction`, `create_predictions` (batch: one prediction per
@@ -85,7 +86,7 @@ Image generation is abstracted behind the `ImageProvider` trait
 are driven off that registry. Since only one provider is registered,
 `routes/settings.tsx` renders its API-key input directly — no provider
 switcher. The trait and the **Google/Gemini** implementation live in the
-`sabi` shared crate, used by both the desktop app and (conceptually) the
+`baim` shared crate, used by both the desktop app and (conceptually) the
 cloud backend.
 
 **Registered providers:**
@@ -126,7 +127,7 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
 ### Key constraints
 
 - **Workspaces** — a workspace is a user-picked folder; images/generations
-  live in `<folder>/.sabi/catalog.db` (a `WorkspaceDb`), so a workspace is
+  live in `<folder>/.baim/catalog.db` (a `WorkspaceDb`), so a workspace is
   self-contained and portable (copy/move the folder, its history comes with
   it). Exactly **one workspace is active** at a time (`AppState.workspace:
   Mutex<Arc<WorkspaceHandle>>` in `workspace.rs`), swapped wholesale by
@@ -134,13 +135,13 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
   `create_prediction`/etc. all operate on the active workspace; none take a
   workspace param, they read `AppState` via `active_workspace()`.
   - **First-ever launch** (no known workspaces): auto-opens a default
-    workspace at `~/Pictures/sabi-images` (`generation::default_storage_dir`),
+    workspace at `~/Pictures/baim-images` (`generation::default_storage_dir`),
     same zero-friction boot as before workspaces existed.
   - **Later launches**: `workspace::boot_workspace` reopens the last-active
-    path (`sabi.db` setting `active_workspace_path`), falling back through the
+    path (`baim.db` setting `active_workspace_path`), falling back through the
     recents list, then the default, if that path is now missing — the app
     never fails to boot for a missing folder.
-  - **Switching** (`open_workspace`): canonicalize → create `.sabi/` + init
+  - **Switching** (`open_workspace`): canonicalize → create `.baim/` + init
     its catalog if new → `seed_from_disk` → register the asset-protocol scope
     → only then commit to the registry and swap `AppState.workspace`, so a
     failure at any step leaves the previously active workspace untouched.
@@ -149,14 +150,14 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
   - **Known limitation**: a workspace that isn't active stops being polled
     client-side (see Polling below) — its pending jobs resume advancing once
     it's reopened.
-- **`sabi.db` registry** — SQLite at `<app-data>/com.recraftory.sabi/sabi.db`
+- **`baim.db` registry** — SQLite at `<app-data>/com.recraftory.baim/baim.db`
   (`RegistryDb` in `registry.rs`), a single always-open connection distinct
   from the active workspace's `WorkspaceDb`. Holds the `settings` table
   (**global**, workspace-independent: API keys, `active_provider`,
   `recraftory_endpoint`, `active_workspace_path`) and the `workspaces` table
   (`path` PK, `last_opened_at`) backing the recents list. On upgrade from a
   pre-workspace install, the old single-catalog `catalog.db` is renamed to
-  `sabi.db` in place (`lib.rs::registry_db_path`) — its `settings` carry over
+  `baim.db` in place (`lib.rs::registry_db_path`) — its `settings` carry over
   untouched (no API key re-entry needed), but its old `images`/`generations`
   rows are left in the file, unused (not migrated into any workspace).
 - **API key** — stored server-side in the registry's `settings` table per
@@ -169,7 +170,7 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
 - **Image files** — saved in the active workspace's folder; generated images
   named `<prediction_id>.jpg`, uploads `<uuid>.png`. Served to the frontend via
   `convertFileSrc(path)` (Tauri asset protocol). The static
-  `"$HOME/Pictures/sabi-images/**/*"` scope in `tauri.conf.json` is only the
+  `"$HOME/Pictures/baim-images/**/*"` scope in `tauri.conf.json` is only the
   build-time default; each opened workspace's folder is registered at runtime
   via `app.asset_protocol_scope().allow_directory(dir, true)` (scope is
   additive — a previous workspace's folder is never de-registered). Requires
@@ -195,7 +196,7 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
   `uuid`, `dirs`, `tokio`, `base64`, `async-trait` (provider trait),
   `tauri-plugin-dialog` (folder picker).
 
-### Shared crate (`sabi/`)
+### Shared crate (`baim/`)
 
 Cargo workspace member. Contains the `ImageProvider` trait + types and the
 `GoogleProvider` implementation. Used by the desktop app (`src-tauri/`).

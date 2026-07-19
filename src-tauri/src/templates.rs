@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::registry::{RegistryDb, TemplateRow};
 
-/// `<app-data>/com.recraftory.sabi/templates/` — sibling of `sabi.db`, holding
+/// `<app-data>/com.recraftory.baim/templates/` — sibling of `baim.db`, holding
 /// copied preview images for saved prompt templates. Created on demand.
 pub fn templates_dir(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("templates")

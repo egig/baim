@@ -35,7 +35,7 @@ pub struct TemplateRow {
     pub created_at: i64,
 }
 
-/// The app-wide registry (`sabi.db`): global settings (API keys, active
+/// The app-wide registry (`baim.db`): global settings (API keys, active
 /// provider, Recraftory endpoint) plus the list of known workspaces. Exactly
 /// one instance, opened once at startup and never swapped — unlike
 /// `WorkspaceDb`, which is reopened on every workspace switch.
@@ -76,7 +76,7 @@ impl RegistryDb {
         .map_err(|e| format!("Failed to create tables: {}", e))?;
 
         // Migrations for pre-existing databases (files that started life as the
-        // old single-catalog `catalog.db`, renamed in place to `sabi.db`).
+        // old single-catalog `catalog.db`, renamed in place to `baim.db`).
 
         // The Replicate provider was removed.
         conn.execute(
