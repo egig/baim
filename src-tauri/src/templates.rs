@@ -19,8 +19,8 @@ fn now() -> i64 {
 /// been seeded, so a user who deletes one doesn't get it back on next launch.
 const BUILTIN_TEMPLATES_SEEDED_KEY: &str = "builtin_templates_seeded";
 
-const FULL_PRODUCT_PHOTO_PREVIEW: &[u8] = include_bytes!("../../public/img/gamis-full.png");
-const FLAT_LAY_PREVIEW: &[u8] = include_bytes!("../../public/img/gamis-flatlay.png");
+const FULL_PRODUCT_PHOTO_PREVIEW: &[u8] = include_bytes!("../../public/img/tshirt-full.png");
+const FLAT_LAY_PREVIEW: &[u8] = include_bytes!("../../public/img/tshirt-flatlay.png");
 
 /// One-time seed of the two starter templates as regular `templates` rows,
 /// so they render, rename, and delete exactly like user-saved ones — no
@@ -42,7 +42,7 @@ pub fn seed_builtin_templates(registry: &RegistryDb, templates_dir: &Path) -> Re
         "full-product-photo",
         "Full product photo",
         FULL_PRODUCT_PHOTO_PREVIEW,
-        "A professional e-commerce product fashion photograph of an Indonesian woman, 155cm tall and weight 70kg with a realistic midsize/curvy build. The shot is cropped from the neck down to toe to be faceless, focusing on the clothing. Elegant, confident, and improved upright posture. Clean, minimalist light gray background, soft studio lighting, mid-end commercial fashion catalog style, squared 1k resolution.",
+        "A professional e-commerce fashion product photograph of an Indonesian adult model, wearing a plain unisex T-shirt. The image is cropped from the neck down to the feet, keeping the model faceless to emphasize the clothing. The T-shirt has a relaxed unisex fit with natural fabric drape, short sleeves, and a classic crew neck. The model stands in an elegant, confident pose with an upright posture and arms relaxed at the sides. Clean, minimalist light gray studio background, soft diffused lighting, high-detail fabric texture, realistic wrinkles and folds, commercial apparel catalog photography, centered composition, square aspect ratio, 1024 x 1024 resolution. ",
     )?;
     seed_one(
         registry,
@@ -50,7 +50,7 @@ pub fn seed_builtin_templates(registry: &RegistryDb, templates_dir: &Path) -> Re
         "flat-lay",
         "Flat-lay",
         FLAT_LAY_PREVIEW,
-        "Professional e-commerce flat lay photography of a complete women's fashion outfit. The clothes are neatly arranged unfolded a clean, solid light gray background. Studio lighting, top-down knolling photography style, crisp details on fabric texture, no wrinkles, mid-end apparel catalog look, square image 1k resolution, sharp focus.",
+        "Professional e-commerce flat lay photography of a fashion outfit. The clothes are neatly arranged unfolded a clean, solid light gray background. Studio lighting, top-down knolling photography style, crisp details on fabric texture, no wrinkles, mid-end apparel catalog look, square image 1k resolution.",
     )?;
 
     registry.write_setting(BUILTIN_TEMPLATES_SEEDED_KEY, "1")?;
