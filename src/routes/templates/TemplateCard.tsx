@@ -1,44 +1,35 @@
 import { useState } from "react";
-import { IconPencil, IconPhoto, IconTrash, IconX } from "../../lib/icons";
+import { IconPencil, IconPhoto, IconTrash } from "../../lib/icons";
 import type { PickerTemplate } from "../../lib/templates";
 
-/** One card on the Templat management page: a large preview, the template name
- *  (inline-editable), the full prompt, and rename/delete actions. Distinct from
- *  the compact, selection-oriented `TemplateTile` used inside the pickers. */
+/** One card on the Templat management page: a compact preview (sized to match
+ *  the asset library tiles), the template name, a prompt excerpt, and
+ *  edit/delete actions overlaid on the preview. Distinct from the compact,
+ *  selection-oriented `TemplateTile` used inside the pickers. Editing (name +
+ *  prompt + preview) happens in `TemplateDialog`, opened via `onEdit`. */
 export function TemplateCard({
   t,
-  onRename,
+  onEdit,
   onDelete,
 }: {
   t: PickerTemplate;
-  onRename: (id: string, name: string) => void;
+  onEdit: () => void;
   onDelete: (id: string) => void;
 }) {
-  const [renaming, setRenaming] = useState(false);
-  const [draftName, setDraftName] = useState(t.name);
-
-  function commitRename() {
-    const name = draftName.trim();
-    setRenaming(false);
-    if (name && name !== t.name) onRename(t.id, name);
-    else setDraftName(t.name);
-  }
+  const [hovered, setHovered] = useState(false);
 
   return (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        borderRadius: "var(--r-card)",
-        border: "1px solid var(--line-3)",
-        background: "var(--surface-0)",
-        overflow: "hidden",
-      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div
         style={{
           position: "relative",
-          aspectRatio: "4 / 3",
+          aspectRatio: "1",
+          borderRadius: "var(--r-card)",
+          overflow: "hidden",
+          border: "1px solid var(--line-3)",
           background: "var(--fill-1)",
           display: "flex",
           alignItems: "center",
@@ -58,79 +49,28 @@ export function TemplateCard({
             }}
           />
         ) : (
-          <IconPhoto size={28} color="var(--ink-350)" stroke={1.5} />
+          <IconPhoto size={22} color="var(--ink-350)" stroke={1.5} />
         )}
-      </div>
 
-      <div
-        style={{
-          padding: "10px 12px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          flex: 1,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {renaming ? (
-            <input
-              autoFocus
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-                if (e.key === "Escape") {
-                  setDraftName(t.name);
-                  setRenaming(false);
-                }
-              }}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 12.5,
-                fontWeight: 600,
-                padding: "2px 4px",
-                border: "1px solid var(--indigo-500)",
-                borderRadius: 4,
-                outline: "none",
-                color: "var(--ink-800)",
-                background: "var(--surface-0)",
-              }}
-            />
-          ) : (
-            <span
-              title={t.name}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 12.5,
-                fontWeight: 600,
-                color: "var(--ink-800)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {t.name}
-            </span>
-          )}
-
+        <div
+          style={{
+            position: "absolute",
+            top: 5,
+            right: 5,
+            display: "flex",
+            gap: 4,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
+            transition: "opacity .12s",
+          }}
+        >
           <button
             type="button"
-            title={renaming ? "Batal" : "Ganti nama"}
-            onClick={() => {
-              if (renaming) {
-                setDraftName(t.name);
-                setRenaming(false);
-              } else {
-                setDraftName(t.name);
-                setRenaming(true);
-              }
-            }}
+            title="Edit templat"
+            onClick={onEdit}
             style={iconBtn}
           >
-            {renaming ? <IconX size={13} /> : <IconPencil size={13} />}
+            <IconPencil size={12} />
           </button>
           <button
             type="button"
@@ -138,18 +78,33 @@ export function TemplateCard({
             onClick={() => onDelete(t.id)}
             style={{ ...iconBtn, color: "var(--red-600)" }}
           >
-            <IconTrash size={13} />
+            <IconTrash size={12} />
           </button>
         </div>
+      </div>
 
+      <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span
+          title={t.name}
+          style={{
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: "var(--ink-800)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {t.name}
+        </span>
         <div
           title={t.prompt}
           style={{
-            fontSize: 11.5,
-            lineHeight: 1.45,
-            color: "var(--ink-500)",
+            fontSize: 11,
+            lineHeight: 1.4,
+            color: "var(--ink-400)",
             display: "-webkit-box",
-            WebkitLineClamp: 4,
+            WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
           }}
@@ -163,14 +118,14 @@ export function TemplateCard({
 
 const iconBtn: React.CSSProperties = {
   flexShrink: 0,
-  width: 24,
-  height: 24,
+  width: 22,
+  height: 22,
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
   border: "1px solid var(--line-4)",
   borderRadius: "var(--r-control)",
-  background: "var(--surface-0)",
-  color: "var(--ink-500)",
+  background: "rgba(255,255,255,.92)",
+  color: "var(--ink-600)",
   cursor: "pointer",
 };

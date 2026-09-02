@@ -311,4 +311,37 @@ impl RegistryDb {
         .map_err(|e| format!("Failed to rename template: {}", e))?;
         Ok(())
     }
+
+    /// Update a template's name and prompt in one shot (the Templat page's
+    /// edit dialog). Preview replacement is handled separately by
+    /// `set_template_preview` since it also touches the filesystem.
+    pub fn update_template(&self, id: &str, name: &str, prompt: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE templates SET name = ?1, prompt = ?2 WHERE id = ?3",
+            params![name, prompt, id],
+        )
+        .map_err(|e| format!("Failed to update template: {}", e))?;
+        Ok(())
+    }
+
+    /// Point a template at a new preview file, returning its previous
+    /// `preview_path` (empty string if it had none) so the caller can delete
+    /// the now-orphaned file.
+    pub fn set_template_preview(&self, id: &str, preview_path: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let old: Option<String> = conn
+            .query_row(
+                "SELECT preview_path FROM templates WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok();
+        conn.execute(
+            "UPDATE templates SET preview_path = ?1 WHERE id = ?2",
+            params![preview_path, id],
+        )
+        .map_err(|e| format!("Failed to update template preview: {}", e))?;
+        Ok(old)
+    }
 }

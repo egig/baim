@@ -122,6 +122,100 @@ pub fn save_template(
     Ok(row)
 }
 
+/// Decode a `data:` URI (client-normalized PNG, same shape as
+/// `save_uploaded_image` accepts) into raw bytes.
+fn decode_data_uri(data_uri: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let encoded = data_uri
+        .split(',')
+        .nth(1)
+        .ok_or_else(|| "Invalid data URI".to_string())?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("Failed to decode preview image: {}", e))
+}
+
+/// Write a preview image (decoded from a data URI) into `templates_dir` under a
+/// fresh uuid filename, returning its path.
+fn write_preview(templates_dir: &Path, data_uri: &str) -> Result<String, String> {
+    std::fs::create_dir_all(templates_dir)
+        .map_err(|e| format!("Failed to create templates directory: {}", e))?;
+    let bytes = decode_data_uri(data_uri)?;
+    let filename = format!("{}.png", uuid::Uuid::new_v4());
+    let dest = templates_dir.join(&filename);
+    std::fs::write(&dest, &bytes)
+        .map_err(|e| format!("Failed to write template preview: {}", e))?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+fn validate(name: &str, prompt: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Template name cannot be empty".to_string());
+    }
+    if prompt.is_empty() {
+        return Err("Template prompt cannot be empty".to_string());
+    }
+    Ok(())
+}
+
+/// Create a template from scratch (the Templat page's "Tambah templat" flow):
+/// name + prompt, with an optional preview image supplied as a data URI. With
+/// no preview, `preview_path` is stored empty and the card falls back to a
+/// placeholder icon.
+pub fn create_template(
+    registry: &RegistryDb,
+    templates_dir: &Path,
+    name: &str,
+    prompt: &str,
+    preview_data_uri: Option<&str>,
+) -> Result<TemplateRow, String> {
+    let name = name.trim();
+    let prompt = prompt.trim();
+    validate(name, prompt)?;
+
+    let preview_path = match preview_data_uri {
+        Some(uri) => write_preview(templates_dir, uri)?,
+        None => String::new(),
+    };
+
+    let row = TemplateRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        prompt: prompt.to_string(),
+        preview_path,
+        created_at: now(),
+    };
+    registry.insert_template(&row)?;
+    Ok(row)
+}
+
+/// Edit an existing template's name, prompt, and — when `preview_data_uri` is
+/// given — its preview image (the old preview file is removed best-effort).
+pub fn update_template(
+    registry: &RegistryDb,
+    templates_dir: &Path,
+    id: &str,
+    name: &str,
+    prompt: &str,
+    preview_data_uri: Option<&str>,
+) -> Result<(), String> {
+    let name = name.trim();
+    let prompt = prompt.trim();
+    validate(name, prompt)?;
+
+    registry.update_template(id, name, prompt)?;
+
+    if let Some(uri) = preview_data_uri {
+        let new_path = write_preview(templates_dir, uri)?;
+        if let Some(old) = registry.set_template_preview(id, &new_path)? {
+            if !old.is_empty() && old != new_path {
+                let _ = std::fs::remove_file(old);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Delete a template row and its preview file. File removal is best-effort: a
 /// missing/already-gone file doesn't fail the row deletion, matching this
 /// codebase's existing tolerance for `delete_image`'s sidecar cleanup.

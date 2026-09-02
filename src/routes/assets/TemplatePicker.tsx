@@ -1,25 +1,25 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { templatesQuery } from "../../lib/queries";
 import { toPickerTemplates } from "../../lib/templates";
 import { deleteTemplate, renameTemplate } from "../../lib/tauri";
 import { Dialog } from "../../root";
-import { IconBookmarkPlus } from "../../lib/icons";
+import { IconBookmarkPlus, IconLayoutGrid } from "../../lib/icons";
 import { TemplateTile } from "./TemplateTile";
-import { useContainerWidth } from "./useContainerWidth";
 
-const TILE_WIDTH = 120;
 const GAP = 10;
 
-
-/** Grid of generation templates the user can multi-select. Clicking a tile
- *  toggles its membership in `selected`. Shared by the single-asset detail
- *  panel and the bulk (multi-image) panel.
+/** Generation-template chooser. Shared by the single-asset detail panel and
+ *  the bulk (multi-image) panel.
+ *
+ *  Only the *selected* templates render inline (their previews). A "Pilih
+ *  templat" button opens a dialog listing every template for multi-select —
+ *  so the inline footprint stays fixed regardless of how many templates the
+ *  user has saved.
  *
  *  Self-fetches templates (`templatesQuery`, most-recently-created first —
- *  includes the seeded starter templates as regular rows). Only ~1 row
- *  renders inline, with a "More templates" overflow dialog beyond that. */
+ *  includes the seeded starter templates as regular rows). */
 export function TemplatePicker({
   selected,
   onToggle,
@@ -32,13 +32,11 @@ export function TemplatePicker({
   const qc = useQueryClient();
   const { data: saved = [] } = useQuery(templatesQuery);
   const all = useMemo(() => toPickerTemplates(saved), [saved]);
-
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const width = useContainerWidth(wrapRef, 0, all.length);
-  const perRow = Math.max(1, Math.floor((width + GAP) / (TILE_WIDTH + GAP)));
-  const overflow = all.length > perRow;
-  const visible = all.slice(0, perRow);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const chosen = useMemo(
+    () => all.filter((t) => selected.has(t.id)),
+    [all, selected]
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   async function handleRename(id: string, name: string) {
     await renameTemplate(id, name);
@@ -64,7 +62,6 @@ export function TemplatePicker({
   if (all.length === 0) {
     return (
       <div
-        ref={wrapRef}
         style={{
           marginBottom,
           display: "flex",
@@ -89,50 +86,70 @@ export function TemplatePicker({
   }
 
   return (
-    <div ref={wrapRef} style={{ marginBottom }}>
-      <div style={grid}>
-        {visible.map((t) => (
-          <TemplateTile
-            key={t.id}
-            t={t}
-            selected={selected.has(t.id)}
-            onToggle={onToggle}
-            onRename={handleRename}
-            onDelete={handleDelete}
-          />
-        ))}
-      </div>
-      {overflow && (
-        <button
-          type="button"
-          onClick={() => setMoreOpen(true)}
-          style={{
-            marginTop: 8,
-            background: "none",
-            border: "none",
-            padding: 0,
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: "var(--indigo-600)",
-            cursor: "pointer",
-          }}
-        >
-          Lebih banyak templat ({all.length})
-        </button>
+    <div style={{ marginBottom }}>
+      {chosen.length > 0 && (
+        <div style={{ ...grid, marginBottom: 10 }}>
+          {chosen.map((t) => (
+            <TemplateTile
+              key={t.id}
+              t={t}
+              selected
+              onToggle={onToggle}
+              onRename={handleRename}
+              onDelete={handleDelete}
+            />
+          ))}
+        </div>
       )}
 
-      {moreOpen && (
-        <Dialog width="min(560px, 90vw)" height="min(520px, 80vh)" onClose={() => setMoreOpen(false)}>
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 30,
+          padding: "0 12px",
+          borderRadius: "var(--r-button)",
+          border: "1px solid var(--line-4)",
+          background: "var(--surface-0)",
+          color: "var(--ink-700)",
+          fontFamily: "var(--font-ui)",
+          fontSize: 11.5,
+          fontWeight: 600,
+          lineHeight: 1,
+          cursor: "pointer",
+        }}
+      >
+        <IconLayoutGrid size={13} color="var(--ink-500)" />
+        {chosen.length > 0
+          ? `Ubah pilihan (${chosen.length})`
+          : "Pilih templat"}
+      </button>
+
+      {pickerOpen && (
+        <Dialog
+          width="min(560px, 90vw)"
+          height="min(520px, 80vh)"
+          onClose={() => setPickerOpen(false)}
+        >
           <div
             style={{
               padding: "14px 18px",
               borderBottom: "1px solid var(--line-1)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
               fontSize: 13,
               fontWeight: 600,
               color: "var(--ink-800)",
             }}
           >
-            Templat saya
+            <span>Pilih templat</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-500)" }}>
+              {selected.size} dipilih
+            </span>
           </div>
           <div
             style={{
@@ -155,6 +172,33 @@ export function TemplatePicker({
                 onDelete={handleDelete}
               />
             ))}
+          </div>
+          <div
+            style={{
+              padding: "12px 18px",
+              borderTop: "1px solid var(--line-1)",
+              display: "flex",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              style={{
+                height: 30,
+                padding: "0 14px",
+                borderRadius: "var(--r-button)",
+                border: "1px solid var(--line-4)",
+                background: "var(--surface-0)",
+                color: "var(--ink-700)",
+                fontFamily: "var(--font-ui)",
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Selesai
+            </button>
           </div>
         </Dialog>
       )}

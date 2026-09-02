@@ -1,25 +1,28 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { templatesQuery } from "../../lib/queries";
-import { toPickerTemplates } from "../../lib/templates";
-import { deleteTemplate, renameTemplate } from "../../lib/tauri";
-import { IconStack2 } from "../../lib/icons";
+import { toPickerTemplates, type PickerTemplate } from "../../lib/templates";
+import { deleteTemplate } from "../../lib/tauri";
+import { IconBookmarkPlus, IconStack2 } from "../../lib/icons";
+import { Button } from "../../root";
 import { TemplateCard } from "./TemplateCard";
+import { TemplateDialog } from "./TemplateDialog";
 
 /** The Templat page: every saved prompt template (name + prompt + preview),
- *  with inline rename and delete. Templates are created elsewhere — via
- *  "Simpan sebagai templat" on a prompt in the asset detail panel — since that
- *  is where a source image (the required preview) is in hand. */
+ *  with full CRUD — "Tambah templat" creates one from scratch (name + prompt +
+ *  optional preview image), each card edits or deletes. Templates can also be
+ *  created elsewhere via "Simpan sebagai templat" on a prompt in the asset
+ *  detail panel, where a source image for the preview is already in hand. */
 export default function Templates() {
   const qc = useQueryClient();
   const { data: saved = [] } = useQuery(templatesQuery);
   const templates = useMemo(() => toPickerTemplates(saved), [saved]);
 
-  async function handleRename(id: string, name: string) {
-    await renameTemplate(id, name);
-    qc.invalidateQueries({ queryKey: templatesQuery.queryKey });
-  }
+  // null = closed; { template: null } = create; { template } = edit that one.
+  const [dialog, setDialog] = useState<{ template: PickerTemplate | null } | null>(
+    null
+  );
 
   async function handleDelete(id: string) {
     const confirmed = await ask("Hapus templat ini?", {
@@ -65,6 +68,11 @@ export default function Templates() {
         >
           {templates.length}
         </span>
+        <div style={{ flex: 1 }} />
+        <Button variant="primary" onClick={() => setDialog({ template: null })}>
+          <IconBookmarkPlus size={14} />
+          Tambah templat
+        </Button>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -84,17 +92,17 @@ export default function Templates() {
           >
             <IconStack2 size={22} stroke={1.5} />
             <div style={{ fontSize: 13, maxWidth: 340, lineHeight: 1.5 }}>
-              Belum ada templat. Buat satu lewat "Simpan sebagai templat" pada
-              prompt yang pernah dipakai di panel detail aset.
+              Belum ada templat. Klik "Tambah templat" untuk membuat satu, atau
+              gunakan "Simpan sebagai templat" pada prompt di panel detail aset.
             </div>
           </div>
         ) : (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-              gap: 14,
-              padding: 20,
+              gridTemplateColumns: "repeat(auto-fill, minmax(98px, 1fr))",
+              gap: 10,
+              padding: "20px 22px",
               alignContent: "start",
             }}
           >
@@ -102,13 +110,21 @@ export default function Templates() {
               <TemplateCard
                 key={t.id}
                 t={t}
-                onRename={handleRename}
+                onEdit={() => setDialog({ template: t })}
                 onDelete={handleDelete}
               />
             ))}
           </div>
         )}
       </div>
+
+      {dialog && (
+        <TemplateDialog
+          template={dialog.template}
+          onClose={() => setDialog(null)}
+          onSaved={() => setDialog(null)}
+        />
+      )}
     </>
   );
 }

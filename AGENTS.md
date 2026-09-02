@@ -39,10 +39,14 @@ Tauri v2 app, two halves over `invoke()`.
   `<Root>` and reached from the left `Sidebar` (`src/components/Sidebar.tsx`):
   - `/` → `routes/assets/index.tsx` — asset library ("Semua Berkas"); its
     subcomponents live as siblings in `routes/assets/` (see below).
-  - `/templates` → `routes/templates/index.tsx` — "Templat": manage saved
-    prompt templates (inline rename + delete). Templates are *created*
-    elsewhere ("Simpan sebagai templat" in the asset detail panel, where a
-    source image for the preview is in hand), not here.
+  - `/templates` → `routes/templates/index.tsx` — "Templat": full CRUD over
+    saved prompt templates. "Tambah templat" (`TemplateDialog`) creates one
+    from scratch — name + prompt + an *optional* preview image (client-
+    normalized PNG data URI; templates without one store `preview_path = ""`
+    and the card shows a placeholder icon). Each card edits (same dialog) or
+    deletes. Templates can *also* be created from "Simpan sebagai templat" in
+    the asset detail panel (`SaveTemplateDialog`), which uses that asset as
+    the preview.
   - `/history` → `routes/generations.tsx` — "Riwayat": every generation with a
     status filter + detail panel + retry. Was previously a titlebar-triggered
     full-window dialog.
@@ -89,7 +93,10 @@ prompt), `refresh_generation`, `list_providers`,
 `get_images`, `get_generations`, `delete_image`, `save_uploaded_image`,
 `get_recraftory_endpoint`, `set_recraftory_endpoint`,
 `list_workspaces`, `get_active_workspace`, `open_workspace`,
-`forget_workspace`.
+`forget_workspace`, `list_templates`, `save_template` (from an asset — copies
+its file as the preview), `create_template` (from scratch — optional preview
+data URI), `update_template` (name + prompt, + preview when a data URI is
+given), `rename_template` (name only, used by the inline picker), `delete_template`.
 
 ### Provider abstraction
 

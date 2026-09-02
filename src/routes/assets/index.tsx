@@ -32,7 +32,8 @@ import { AssetGrid } from "./AssetGrid";
 import { AssetToolbar } from "./AssetToolbar";
 import { BulkPanel } from "./BulkPanel";
 import { DetailPanel } from "./DetailPanel";
-import { displayName, fileToDataUri } from "./helpers";
+import { fileToDataUri } from "../../lib/image";
+import { displayName } from "./helpers";
 import type { AssetFilter, AssetView, Dims, SortDir, SortKey } from "./types";
 import { SORT_OPTIONS } from "./helpers";
 

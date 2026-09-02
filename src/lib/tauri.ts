@@ -240,6 +240,37 @@ export async function saveTemplate(
   });
 }
 
+/** Create a template from scratch (Templat page "Tambah templat"): a name +
+ *  prompt, with an optional preview image as a client-normalized PNG data URI.
+ *  With no preview, the card falls back to a placeholder icon. */
+export async function createTemplate(
+  name: string,
+  prompt: string,
+  previewDataUri?: string
+): Promise<Template> {
+  return invoke<Template>("create_template", {
+    name,
+    prompt,
+    previewDataUri: previewDataUri ?? null,
+  });
+}
+
+/** Edit an existing template's name and prompt, and — when `previewDataUri` is
+ *  given — replace its preview image (the old preview file is removed). */
+export async function updateTemplate(
+  id: string,
+  name: string,
+  prompt: string,
+  previewDataUri?: string
+): Promise<void> {
+  return invoke<void>("update_template", {
+    id,
+    name,
+    prompt,
+    previewDataUri: previewDataUri ?? null,
+  });
+}
+
 /** Delete a saved template and its preview file. */
 export async function deleteTemplate(id: string): Promise<void> {
   return invoke<void>("delete_template", { id });

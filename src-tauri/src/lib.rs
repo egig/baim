@@ -116,6 +116,8 @@ pub fn run() {
             commands::forget_workspace,
             commands::list_templates,
             commands::save_template,
+            commands::create_template,
+            commands::update_template,
             commands::delete_template,
             commands::rename_template,
         ])

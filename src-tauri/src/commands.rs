@@ -282,6 +282,45 @@ pub async fn save_template(
     )
 }
 
+/// Create a template from scratch (Templat page "Tambah templat"): a name +
+/// prompt with an optional preview image supplied as a data URI. `async` for
+/// the same blocking-I/O reason as `save_template`.
+#[tauri::command]
+pub async fn create_template(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    prompt: String,
+    preview_data_uri: Option<String>,
+) -> Result<TemplateRow, String> {
+    templates::create_template(
+        &state.registry,
+        &state.templates_dir,
+        &name,
+        &prompt,
+        preview_data_uri.as_deref(),
+    )
+}
+
+/// Edit an existing template's name, prompt, and — when a data URI is given —
+/// its preview image.
+#[tauri::command]
+pub async fn update_template(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+    prompt: String,
+    preview_data_uri: Option<String>,
+) -> Result<(), String> {
+    templates::update_template(
+        &state.registry,
+        &state.templates_dir,
+        &id,
+        &name,
+        &prompt,
+        preview_data_uri.as_deref(),
+    )
+}
+
 /// Delete a saved template and its preview file. `async` for the same reason
 /// as `save_template`.
 #[tauri::command]
