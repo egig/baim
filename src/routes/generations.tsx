@@ -403,7 +403,7 @@ function GenerationDetail({
   );
 }
 
-export default function Generations({ onClose }: { onClose: () => void }) {
+export default function Generations() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
@@ -495,11 +495,9 @@ export default function Generations({ onClose }: { onClose: () => void }) {
     return src ? convertFileSrc(src.path) : null;
   }
 
-  /** Panel action: close the dialog and select this output image in the
-   *  always-mounted assets library underneath (via router state, consumed by
-   *  the selectPath effect in assets.tsx). */
+  /** Panel action: navigate to the assets library and select this output image
+   *  there (via router state, consumed by the selectPath effect in assets.tsx). */
   function onOpenImage(path: string) {
-    onClose();
     navigate("/", { state: { selectPath: path } });
   }
 
@@ -532,7 +530,7 @@ export default function Generations({ onClose }: { onClose: () => void }) {
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>
-          Antrean
+          Riwayat
         </div>
         <span
           style={{
@@ -577,22 +575,6 @@ export default function Generations({ onClose }: { onClose: () => void }) {
             Kosongkan antrean
           </Button>
         )}
-
-        <div
-          onClick={onClose}
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 6,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            color: "var(--ink-400)",
-          }}
-        >
-          <IconX size={12} />
-        </div>
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>

@@ -11,15 +11,16 @@ import { IconCheck, IconChevronDown } from "../../lib/icons";
 
 const MENU_WIDTH = 180;
 
-/** Single-select dropdown: an icon + label trigger button that opens a
- *  portaled list of options with a checkmark on the active one. Generic over
- *  the option value so it backs both the origin filter and the sort order —
- *  each gets its own trigger instead of being merged into one control.
- *  Follows the same portal-dropdown pattern as WorkspaceSwitcher. */
+/** Single-select dropdown: a trigger button that opens a portaled list of
+ *  options with a checkmark on the active one. Generic over the option value
+ *  so it backs both the origin filter and the sort order — each gets its own
+ *  trigger instead of being merged into one control. Follows the same
+ *  portal-dropdown pattern as WorkspaceSwitcher. */
 export function DropdownMenu<T extends string>({
   icon,
   idleLabel,
   title,
+  iconOnly,
   options,
   value,
   onChange,
@@ -27,9 +28,12 @@ export function DropdownMenu<T extends string>({
 }: {
   icon: ReactNode;
   /** Label shown on the trigger when the value has no active-highlight label
-   *  (or `highlightWhenActive` is false). */
+   *  (or `highlightWhenActive` is false). Ignored when `iconOnly`. */
   idleLabel: string;
   title: string;
+  /** Collapse the trigger to just the icon + chevron (label moves to the
+   *  `title` tooltip). The active-highlight background is still applied. */
+  iconOnly?: boolean;
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
@@ -92,11 +96,11 @@ export function DropdownMenu<T extends string>({
           height: 26,
           display: "inline-flex",
           alignItems: "center",
-          gap: 6,
+          gap: iconOnly ? 3 : 6,
           border: "1px solid var(--line-3)",
           borderRadius: "var(--r-control)",
           background: active ? "var(--indigo-100)" : "var(--surface-0)",
-          padding: "0 9px",
+          padding: iconOnly ? "0 6px" : "0 9px",
           cursor: "pointer",
           fontSize: 12,
           fontWeight: 600,
@@ -104,7 +108,7 @@ export function DropdownMenu<T extends string>({
         }}
       >
         {icon}
-        {active ? activeLabel : idleLabel}
+        {!iconOnly && (active ? activeLabel : idleLabel)}
         <IconChevronDown size={13} stroke={1.8} />
       </button>
 

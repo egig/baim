@@ -18,4 +18,5 @@ export {
   IconFilter,
   IconCheck,
   IconArrowsSort,
+  IconHistory,
 } from "@tabler/icons-react";

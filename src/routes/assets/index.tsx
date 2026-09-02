@@ -516,7 +516,6 @@ export default function Assets() {
       />
 
       <AssetToolbar
-        activeWorkspace={activeWorkspace}
         visibleCount={visibleImages.length}
         filter={filter}
         onFilterChange={setFilter}

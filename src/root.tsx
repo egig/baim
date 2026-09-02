@@ -18,8 +18,8 @@ import {
   isActive,
 } from "./lib/queries";
 import Settings from "./routes/settings";
-import Generations from "./routes/generations";
-import { IconX, IconAlignBoxLeftStretch, IconSettings } from "./lib/icons";
+import { Sidebar } from "./components/Sidebar";
+import { IconX } from "./lib/icons";
 
 /** Height of the custom titlebar (drag region + traffic-light space on
  *  macOS). Full-window overlays sit below this so they never cover it. */
@@ -225,101 +225,23 @@ export function Dialog({
   );
 }
 
-/** Full-window panel: covers the entire app window with no dim backdrop,
- *  instead of floating as a centered box over a scrim. Used for the
- *  Queue/Generations dialog, which benefits from the extra room. Closes on
- *  Escape (topmost-layer only); the panel itself owns its own close button. */
-export function FullWindowPanel({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  useEscapeLayer(onClose);
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: TITLEBAR_HEIGHT,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 900,
-        background: "var(--surface-1)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
 /* ---------- shell context ---------- */
 
 const ShellContext = createContext<{
   openSettings: () => void;
-  openQueue: () => void;
-}>({ openSettings: () => {}, openQueue: () => {} });
+}>({ openSettings: () => {} });
 
-/** Shell actions (open the settings / queue dialogs) for pages rendered in the
- *  outlet, e.g. the assets page's missing-API-key banner. */
+/** Shell actions (open the settings dialog) for pages rendered in the outlet,
+ *  e.g. the assets page's missing-API-key banner. */
 export function useShell() {
   return useContext(ShellContext);
 }
 
-const iconQueue = <IconAlignBoxLeftStretch size={15} />;
-const iconSettings = <IconSettings size={15} />;
-
 /* ---------- titlebar ---------- */
 
-/** Icon button in the titlebar. Children (the SVG) sit inside a fixed 24px
- *  square; clicks on it don't start a window drag because Tauri only drags
- *  from elements carrying data-tauri-drag-region themselves. */
-function TitlebarButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={{
-        position: "relative",
-        width: 26,
-        height: 24,
-        padding: 0,
-        border: "none",
-        borderRadius: 6,
-        background: "transparent",
-        color: "var(--ink-500)",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Titlebar({
-  activeCount,
-  onOpenQueue,
-  onOpenSettings,
-}: {
-  activeCount: number;
-  onOpenQueue: () => void;
-  onOpenSettings: () => void;
-}) {
+/** Bare custom titlebar: a drag region that also reserves space for the macOS
+ *  traffic lights. Navigation and shell actions live in the `Sidebar` now. */
+function Titlebar() {
   return (
     <div
       data-tauri-drag-region
@@ -328,42 +250,8 @@ function Titlebar({
         flexShrink: 0,
         background: "var(--surface-2)",
         borderBottom: "1px solid var(--line-1)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-end",
-        gap: 2,
-        padding: "0 10px",
       }}
-    >
-      <TitlebarButton title="Antrean" onClick={onOpenQueue}>
-        {iconQueue}
-        {activeCount > 0 && (
-          <span
-            style={{
-              position: "absolute",
-              top: 0,
-              right: -2,
-              minWidth: 13,
-              height: 13,
-              padding: "0 3px",
-              borderRadius: 9999,
-              background: "var(--indigo-500)",
-              color: "#fff",
-              fontSize: 9,
-              fontWeight: 700,
-              lineHeight: "13px",
-              textAlign: "center",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {activeCount}
-          </span>
-        )}
-      </TitlebarButton>
-      <TitlebarButton title="Pengaturan" onClick={onOpenSettings}>
-        {iconSettings}
-      </TitlebarButton>
-    </div>
+    />
   );
 }
 
@@ -371,17 +259,15 @@ function Titlebar({
 
 export default function Root() {
   // Observing the queue engine from the always-mounted shell keeps it polling
-  // and draining regardless of dialog state; the count drives the titlebar badge.
+  // and draining regardless of route; the count drives the sidebar's Riwayat badge.
   const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
   const { data: activeCount = 0 } = useQuery({
     ...generationsQuery(activeWorkspace?.path),
     select: (gens) => gens.filter(isActive).length,
   });
 
-  const [openDialog, setOpenDialog] = useState<"settings" | "queue" | null>(
-    null
-  );
-  const closeDialog = () => setOpenDialog(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeDialog = () => setSettingsOpen(false);
 
   // A detached Interactions-mode task (see generation.rs::spawn_interaction)
   // can hit a rate limit after its own submit_queued tick already returned,
@@ -400,10 +286,7 @@ export default function Root() {
   }, []);
 
   const shell = useMemo(
-    () => ({
-      openSettings: () => setOpenDialog("settings"),
-      openQueue: () => setOpenDialog("queue"),
-    }),
+    () => ({ openSettings: () => setSettingsOpen(true) }),
     []
   );
 
@@ -418,32 +301,37 @@ export default function Root() {
           flexDirection: "column",
         }}
       >
-        <Titlebar
-          activeCount={activeCount}
-          onOpenQueue={shell.openQueue}
-          onOpenSettings={shell.openSettings}
-        />
+        <Titlebar />
         <div
           style={{
             flex: 1,
             display: "flex",
-            flexDirection: "column",
             minWidth: 0,
             minHeight: 0,
           }}
         >
-          <Outlet />
+          <Sidebar
+            activeWorkspace={activeWorkspace}
+            activeCount={activeCount}
+            onOpenSettings={shell.openSettings}
+          />
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              minWidth: 0,
+              minHeight: 0,
+            }}
+          >
+            <Outlet />
+          </div>
         </div>
 
-        {openDialog === "settings" && (
+        {settingsOpen && (
           <Dialog width={540} onClose={closeDialog}>
             <Settings onClose={closeDialog} />
           </Dialog>
-        )}
-        {openDialog === "queue" && (
-          <FullWindowPanel onClose={closeDialog}>
-            <Generations onClose={closeDialog} />
-          </FullWindowPanel>
         )}
       </div>
     </ShellContext.Provider>

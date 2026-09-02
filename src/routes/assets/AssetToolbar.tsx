@@ -9,9 +9,7 @@ import {
 } from "../../lib/icons";
 import { SORT_OPTIONS } from "./helpers";
 import type { AssetFilter, AssetView } from "./types";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { DropdownMenu } from "./DropdownMenu";
-import type { WorkspaceInfo } from "../../lib/tauri";
 
 const FILTER_OPTIONS: { value: AssetFilter; label: string }[] = [
   { value: "all", label: "Semua" },
@@ -20,12 +18,11 @@ const FILTER_OPTIONS: { value: AssetFilter; label: string }[] = [
   { value: "novariant", label: "Tanpa Varian" },
 ];
 
-/** Top toolbar for the asset library: workspace switcher, origin filter and
- *  sort as two separate dropdown buttons, search, grid/list toggle,
- *  bulk-select mode, and upload. Purely controlled — all state lives in the
- *  parent route. */
+/** Top toolbar for the asset library: page title, origin filter and sort as
+ *  two separate dropdown buttons, search, grid/list toggle, bulk-select mode,
+ *  and upload. The active-folder switcher lives in the sidebar header now.
+ *  Purely controlled — all state lives in the parent route. */
 export function AssetToolbar({
-  activeWorkspace,
   visibleCount,
   filter,
   onFilterChange,
@@ -40,7 +37,6 @@ export function AssetToolbar({
   onToggleSelectMode,
   onUploadClick,
 }: {
-  activeWorkspace: WorkspaceInfo | undefined;
   visibleCount: number;
   filter: AssetFilter;
   onFilterChange: (v: AssetFilter) => void;
@@ -70,13 +66,16 @@ export function AssetToolbar({
         overflowX: "auto",
       }}
     >
-      {activeWorkspace ? (
-        <WorkspaceSwitcher activeWorkspace={activeWorkspace} />
-      ) : (
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)", flexShrink: 0 }}>
-          Daftar Gambar
-        </div>
-      )}
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 600,
+          color: "var(--ink-800)",
+          flexShrink: 0,
+        }}
+      >
+        Semua Berkas
+      </div>
       <span
         style={{
           minWidth: 18,
@@ -100,6 +99,7 @@ export function AssetToolbar({
         icon={<IconFilter size={13} stroke={1.8} />}
         idleLabel="Filter"
         title="Filter asal gambar"
+        iconOnly
         options={FILTER_OPTIONS}
         value={filter}
         onChange={onFilterChange}
@@ -129,8 +129,9 @@ export function AssetToolbar({
 
       <DropdownMenu
         icon={<IconArrowsSort size={13} stroke={1.8} />}
-        idleLabel={SORT_OPTIONS.find((o) => o.value === sortValue)?.label ?? "Urutkan"}
+        idleLabel="Urutkan"
         title="Urutkan"
+        iconOnly
         options={SORT_OPTIONS}
         value={sortValue}
         onChange={onSortChange}

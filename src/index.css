@@ -90,3 +90,13 @@ body {
 .assets-app .gen-row:hover {
   background: var(--surface-2);
 }
+
+/* Sidebar navigation rows (components/Sidebar.tsx). The active row keeps its
+   indigo fill via an inline style, which wins over this hover. */
+.assets-app .nav-row {
+  transition: background 0.12s, color 0.12s;
+}
+.assets-app .nav-row:hover {
+  background: var(--fill-1);
+  color: var(--ink-700);
+}

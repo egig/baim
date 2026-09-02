@@ -7,23 +7,21 @@ import {
   listWorkspaces,
   openWorkspace,
   type WorkspaceInfo,
-} from "../../lib/tauri";
-import { activeWorkspaceQuery, imagesQuery, generationsQuery } from "../../lib/queries";
-import { useEscapeLayer } from "../../root";
-import { IconChevronDown, IconFolder, IconX } from "../../lib/icons";
+} from "../lib/tauri";
+import { activeWorkspaceQuery, imagesQuery, generationsQuery } from "../lib/queries";
+import { useEscapeLayer } from "../root";
+import { IconChevronDown, IconFolder, IconX } from "../lib/icons";
 
 const workspacesQueryKey = ["workspaces"] as const;
 const MENU_WIDTH = 280;
 
-/** Replaces the old static "Daftar Gambar" title: a clickable control showing
- *  the active workspace's folder name, opening a dropdown of recent
- *  workspaces plus an "Open Folder…" action — the only place the active
- *  folder can be changed. The dropdown is rendered via a portal into
- *  `document.body`, positioned from the trigger button's viewport rect —
- *  the toolbar it lives in has `overflowX: "auto"`, which per the CSS spec
- *  implicitly computes `overflow-y` as `auto` too, so an absolutely
- *  positioned dropdown nested inside it gets clipped rather than floating
- *  above the grid below. */
+/** The active-workspace control in the sidebar header: a full-width button
+ *  showing the current folder name, opening a dropdown of recent workspaces
+ *  plus an "Open Folder…" action — the only place the active folder can be
+ *  changed, and global because every route reads the active workspace. The
+ *  dropdown is rendered via a portal into `document.body`, positioned from the
+ *  trigger button's viewport rect, so it floats over the routed content
+ *  instead of being clipped by the sidebar. */
 export function WorkspaceSwitcher({
   activeWorkspace,
 }: {
@@ -119,28 +117,43 @@ export function WorkspaceSwitcher({
   }
 
   return (
-    <div style={{ flexShrink: 0 }}>
+    <div style={{ width: "100%" }}>
       <button
         ref={buttonRef}
         type="button"
+        className="nav-row"
         onClick={() => setOpen((v) => !v)}
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          gap: 4,
+          gap: 8,
+          width: "100%",
           border: "none",
           background: "transparent",
           cursor: "pointer",
-          padding: "4px 6px",
-          marginLeft: -6,
+          height: 32,
+          padding: "0 8px",
           borderRadius: "var(--r-control)",
-          fontSize: 14,
-          fontWeight: 600,
+          fontFamily: "var(--font-ui)",
+          fontSize: 13,
+          fontWeight: 700,
           color: "var(--ink-800)",
         }}
         title={activeWorkspace.path}
       >
-        {activeWorkspace.name}
+        <IconFolder size={15} color="var(--ink-500)" stroke={1.6} />
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {activeWorkspace.name}
+        </span>
         <IconChevronDown size={14} color="var(--ink-500)" stroke={1.6} />
       </button>
 

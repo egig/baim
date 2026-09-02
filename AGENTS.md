@@ -35,17 +35,30 @@ Tauri v2 app, two halves over `invoke()`.
   `.assets-app`), **not** Tailwind utility classes.
 - TS quirks: `verbatimModuleSyntax` (use `import type`), `erasableSyntaxOnly`
   (no enums, no namespaces).
-- **Routes** (`src/main.tsx`):
-  - `/` → `routes/assets/index.tsx` — asset library (main page); its
-    subcomponents live as siblings in `routes/assets/` (see below). Its
-    toolbar's `WorkspaceSwitcher` (`routes/assets/WorkspaceSwitcher.tsx`) is
-    the only place the active folder is changed (native picker via
-    `@tauri-apps/plugin-dialog`, same as the old Settings folder picker).
-  - `/settings` → `routes/settings.tsx` — settings page (Gemini API key input
-    only; no provider switcher, no folder picker — see Workspaces below)
+- **Routes** (`src/main.tsx`): three top-level routes, all nested under
+  `<Root>` and reached from the left `Sidebar` (`src/components/Sidebar.tsx`):
+  - `/` → `routes/assets/index.tsx` — asset library ("Semua Berkas"); its
+    subcomponents live as siblings in `routes/assets/` (see below).
+  - `/templates` → `routes/templates/index.tsx` — "Templat": manage saved
+    prompt templates (inline rename + delete). Templates are *created*
+    elsewhere ("Simpan sebagai templat" in the asset detail panel, where a
+    source image for the preview is in hand), not here.
+  - `/history` → `routes/generations.tsx` — "Riwayat": every generation with a
+    status filter + detail panel + retry. Was previously a titlebar-triggered
+    full-window dialog.
+  - Settings (`routes/settings.tsx` — Gemini API key + concurrency ceiling) is
+    **not a route**: it's a `Dialog` opened from the Sidebar's footer button
+    via the `useShell()` context (`openSettings`).
+- The `Sidebar` header hosts `WorkspaceSwitcher`
+  (`src/components/WorkspaceSwitcher.tsx`) — the only place the active folder is
+  changed (native picker via `@tauri-apps/plugin-dialog`, same as the old
+  Settings folder picker). It lives in the sidebar, not a route, because every
+  route reads the active workspace.
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
-- `src/root.tsx` — layout shell with sidebar, exports `Button` component.
+- `src/root.tsx` — layout shell: a bare drag-region `Titlebar`, the `Sidebar`,
+  and the routed `<Outlet>`. Owns the settings dialog and the `ShellContext`.
+  Exports `Button`, `Dialog`, `ImageViewer`, `useEscapeLayer`, `useShell`.
 - **One component per file.** A route file (`routes/*.tsx` or `routes/*/index.tsx`)
   owns page-level state and composition only; every `memo`/exported component it
   used to render inline gets its own file next to it (e.g. `routes/assets/ImageCard.tsx`,
