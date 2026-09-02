@@ -79,6 +79,7 @@ export function DetailPanel({
   // first open. Drives the responsive two-column (image | metadata) header.
   const [panelWidth, setPanelWidth] = useState(0);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [variantsExpanded, setVariantsExpanded] = useState(false);
   const [varianTab, setVarianTab] = useState<"template" | "prompt">("template");
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -407,7 +408,36 @@ export function DetailPanel({
       </div>
 
       {/* Variant generation — pinned at the bottom like a chat composer,
-          rather than scrolling away with the rest of the panel. */}
+          rather than scrolling away with the rest of the panel. Collapsed by
+          default; the "Buat varian" footer button toggles it open. */}
+      {!composerOpen ? (
+        <div style={{ padding: "12px 18px", borderTop: "1px solid var(--line-1)" }}>
+          <button
+            type="button"
+            onClick={() => setComposerOpen(true)}
+            style={{
+              width: "100%",
+              height: 34,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              borderRadius: "var(--r-button)",
+              border: "1px solid var(--line-4)",
+              background: "var(--surface-0)",
+              color: "var(--indigo-600)",
+              fontFamily: "var(--font-ui)",
+              fontSize: 12,
+              fontWeight: 600,
+              lineHeight: 1,
+              cursor: "pointer",
+            }}
+          >
+            <IconSparkles size={14} color="var(--indigo-600)" />
+            Buat varian
+          </button>
+        </div>
+      ) : (
       <div style={{ padding: "16px 18px", borderTop: "1px solid var(--line-1)" }}>
         <div
           style={{
@@ -418,14 +448,25 @@ export function DetailPanel({
           }}
         >
           <div
+            onClick={() => setComposerOpen(false)}
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
               fontSize: 10.5,
               fontWeight: 600,
               letterSpacing: ".04em",
               color: "var(--ink-350)",
               textTransform: "uppercase",
+              cursor: "pointer",
+              userSelect: "none",
             }}
           >
+            <IconChevronDown
+              size={12}
+              color="var(--ink-400)"
+              style={{ transform: "rotate(0deg)" }}
+            />
             Buat varian
           </div>
           <Segmented
@@ -509,6 +550,7 @@ export function DetailPanel({
           </div>
         )}
       </div>
+      )}
 
       {savingTemplate && prompt && (
         <SaveTemplateDialog

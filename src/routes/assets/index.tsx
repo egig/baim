@@ -191,11 +191,13 @@ export default function Assets() {
   // detail-panel selection intact.
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
 
-  // Bulk-action selection: a Select mode where clicking tiles toggles membership
-  // in `selectedPaths` (instead of opening the detail panel), and the right panel
-  // becomes a bulk template picker that fans out across every selected image.
-  const [selectMode, setSelectMode] = useState(false);
+  // Bulk-action selection: ⌘/Ctrl-clicking a tile toggles its membership in
+  // `selectedPaths` instead of opening the detail panel. Once ≥1 image is
+  // picked we're in "select mode" — plain clicks toggle too, and the right
+  // panel becomes a bulk template picker that fans out across every selected
+  // image. No explicit toggle button; the panel's "Bersihkan" exits.
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const selectMode = selectedPaths.size > 0;
   // Batch vs Interactions API for bulk generation only (single-image flows
   // below always use Batch implicitly). Ephemeral — always starts at
   // "batch", never persisted, so a leftover choice can't leak into an
@@ -272,17 +274,9 @@ export default function Assets() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  // Toggle Select (bulk) mode. Entering it closes the single-asset detail; both
-  // transitions reset the multi-selection and any picked templates.
-  function toggleSelectMode() {
-    setSelectMode((m) => !m);
-    setSelectedPaths(new Set());
-    setSelectedTemplates(new Set());
-    setSelectedPath(null);
-    setBulkMode("batch");
-    setError(null);
-  }
-
+  // ⌘/Ctrl-click a tile, or a plain click once already in select mode, toggles
+  // its membership in the bulk selection. Entering select mode closes the
+  // single-asset detail panel.
   const togglePathSelection = useCallback((path: string) => {
     setSelectedPaths((prev) => {
       const next = new Set(prev);
@@ -290,6 +284,27 @@ export default function Assets() {
       else next.add(path);
       return next;
     });
+    setSelectedPath(null);
+    setVariantPrompt("");
+    setError(null);
+  }, []);
+
+  // Dispatch a tile click: additive (⌘/Ctrl) clicks and any click while in
+  // select mode toggle the bulk selection; otherwise open the detail panel.
+  const onTileClick = useCallback(
+    (path: string, additive: boolean) => {
+      if (additive || selectMode) togglePathSelection(path);
+      else selectAsset(path);
+    },
+    [selectMode, togglePathSelection, selectAsset]
+  );
+
+  // Clear the bulk selection and every choice scoped to it.
+  const clearSelection = useCallback(() => {
+    setSelectedPaths(new Set());
+    setSelectedTemplates(new Set());
+    setBulkMode("batch");
+    setError(null);
   }, []);
 
   function close() {
@@ -424,7 +439,6 @@ export default function Assets() {
         );
       }
       enqueueGenerations(all);
-      setSelectMode(false);
       setSelectedPaths(new Set());
       setSelectedTemplates(new Set());
       setBulkMode("batch");
@@ -496,9 +510,9 @@ export default function Assets() {
   const generateDisabled = generating || !variantPrompt.trim();
   const generateLabel = generating ? "Menghasilkan…" : "Hasilkan varian";
 
-  // The right panel shows the bulk picker in Select mode (once ≥1 image is
-  // picked), otherwise the single-asset detail. Both shrink the grid.
-  const bulkOpen = selectMode && selectedPaths.size > 0;
+  // The right panel shows the bulk picker once ≥1 image is picked, otherwise
+  // the single-asset detail. Both shrink the grid.
+  const bulkOpen = selectMode;
   const panelOpen = bulkOpen || hasSelection;
   const bulkJobCount = selectedPaths.size * selectedTemplates.size;
 
@@ -525,9 +539,6 @@ export default function Assets() {
         onSortChange={changeSort}
         view={view}
         onViewChange={setView}
-        selectMode={selectMode}
-        selectedCount={selectedPaths.size}
-        onToggleSelectMode={toggleSelectMode}
         onUploadClick={onUploadClick}
       />
 
@@ -547,7 +558,7 @@ export default function Assets() {
           selectMode={selectMode}
           selectedPaths={selectedPaths}
           selectedPath={selectedPath}
-          onSelectImage={selectMode ? togglePathSelection : selectAsset}
+          onSelectImage={onTileClick}
           onLoad={handleImageLoad}
           srcPathOf={srcPathOf}
           isAi={(path) => !!gens[path]}
@@ -557,7 +568,7 @@ export default function Assets() {
         {bulkOpen && (
           <BulkPanel
             selectedCount={selectedPaths.size}
-            onClearSelection={() => setSelectedPaths(new Set())}
+            onClearSelection={clearSelection}
             selectedTemplates={selectedTemplates}
             onToggleTemplate={toggleTemplate}
             mode={bulkMode}

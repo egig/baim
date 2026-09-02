@@ -18,12 +18,12 @@ export const ImageRow = memo(function ImageRow({
   isAi: boolean;
   selected: boolean;
   dim: Dims | undefined;
-  onSelect: (path: string) => void;
+  onSelect: (path: string, additive: boolean) => void;
   onLoad: (path: string, w: number, h: number) => void;
 }) {
   return (
     <div
-      onClick={() => onSelect(img.path)}
+      onClick={(e) => onSelect(img.path, e.metaKey || e.ctrlKey)}
       style={{
         position: "relative",
         display: "flex",

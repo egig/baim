@@ -61,7 +61,7 @@ export function AssetGrid({
   selectMode: boolean;
   selectedPaths: Set<string>;
   selectedPath: string | null;
-  onSelectImage: (path: string) => void;
+  onSelectImage: (path: string, additive: boolean) => void;
   onLoad: (path: string, w: number, h: number) => void;
   srcPathOf: (gen: Generation) => string | undefined;
   isAi: (path: string) => boolean;

@@ -5,7 +5,7 @@ import {
   IconFilter,
   IconLayoutGrid,
   IconList,
-  IconUpload,
+  IconDownload
 } from "../../lib/icons";
 import { SORT_OPTIONS } from "./helpers";
 import type { AssetFilter, AssetView } from "./types";
@@ -19,9 +19,10 @@ const FILTER_OPTIONS: { value: AssetFilter; label: string }[] = [
 ];
 
 /** Top toolbar for the asset library: page title, origin filter and sort as
- *  two separate dropdown buttons, search, grid/list toggle, bulk-select mode,
- *  and upload. The active-folder switcher lives in the sidebar header now.
- *  Purely controlled — all state lives in the parent route. */
+ *  two separate dropdown buttons, search, grid/list toggle, and upload. Bulk
+ *  selection is driven by ⌘/Ctrl-clicking tiles, not a toolbar button. The
+ *  active-folder switcher lives in the sidebar header now. Purely controlled —
+ *  all state lives in the parent route. */
 export function AssetToolbar({
   visibleCount,
   filter,
@@ -32,9 +33,6 @@ export function AssetToolbar({
   onSortChange,
   view,
   onViewChange,
-  selectMode,
-  selectedCount,
-  onToggleSelectMode,
   onUploadClick,
 }: {
   visibleCount: number;
@@ -46,9 +44,6 @@ export function AssetToolbar({
   onSortChange: (v: string) => void;
   view: AssetView;
   onViewChange: (v: AssetView) => void;
-  selectMode: boolean;
-  selectedCount: number;
-  onToggleSelectMode: () => void;
   onUploadClick: () => void;
 }) {
   return (
@@ -146,16 +141,8 @@ export function AssetToolbar({
         onChange={onViewChange}
       />
 
-      <Button variant={selectMode ? "primary" : "outline"} onClick={onToggleSelectMode}>
-        {selectMode
-          ? selectedCount > 0
-            ? `${selectedCount} dipilih`
-            : "Selesai"
-          : "Pilih"}
-      </Button>
-
       <Button variant="outline" onClick={onUploadClick}>
-        <IconUpload size={14} color="var(--ink-700)" stroke={1.3} />
+        <IconDownload size={14} color="var(--ink-700)" stroke={1.3} />
         Import gambar
       </Button>
     </div>
