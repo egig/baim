@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { useT } from "../../lib/i18n";
 import { IconLoader2 } from "../../lib/icons";
 
 /** In-progress generation rendered as a list row, mirroring `PendingCard`. */
@@ -8,6 +9,7 @@ export const PendingRow = memo(function PendingRow({
 }: {
   srcPath?: string;
 }) {
+  const { t } = useT();
   return (
     <div
       style={{
@@ -70,7 +72,7 @@ export const PendingRow = memo(function PendingRow({
           color: "var(--ink-400)",
         }}
       >
-        Menghasilkan…
+        {t("assets.generating")}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { templatesQuery } from "../../lib/queries";
 import { toPickerTemplates, type PickerTemplate } from "../../lib/templates";
 import { deleteTemplate } from "../../lib/tauri";
+import { useT } from "../../lib/i18n";
 import { IconBookmarkPlus, IconStack2 } from "../../lib/icons";
 import { Button } from "../../root";
 import { TemplateCard } from "./TemplateCard";
@@ -15,6 +16,7 @@ import { TemplateDialog } from "./TemplateDialog";
  *  created elsewhere via "Simpan sebagai templat" on a prompt in the asset
  *  detail panel, where a source image for the preview is already in hand. */
 export default function Templates() {
+  const { t } = useT();
   const qc = useQueryClient();
   const { data: saved = [] } = useQuery(templatesQuery);
   const templates = useMemo(() => toPickerTemplates(saved), [saved]);
@@ -25,8 +27,8 @@ export default function Templates() {
   );
 
   async function handleDelete(id: string) {
-    const confirmed = await ask("Hapus templat ini?", {
-      title: "Hapus templat",
+    const confirmed = await ask(t("templates.confirmDelete"), {
+      title: t("templates.confirmDeleteTitle"),
       kind: "warning",
     });
     if (!confirmed) return;
@@ -48,7 +50,7 @@ export default function Templates() {
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>
-          Templat
+          {t("templates.title")}
         </div>
         <span
           style={{
@@ -71,7 +73,7 @@ export default function Templates() {
         <div style={{ flex: 1 }} />
         <Button variant="primary" onClick={() => setDialog({ template: null })}>
           <IconBookmarkPlus size={14} />
-          Tambah templat
+          {t("templates.add")}
         </Button>
       </div>
 
@@ -92,8 +94,7 @@ export default function Templates() {
           >
             <IconStack2 size={22} stroke={1.5} />
             <div style={{ fontSize: 13, maxWidth: 340, lineHeight: 1.5 }}>
-              Belum ada templat. Klik "Tambah templat" untuk membuat satu, atau
-              gunakan "Simpan sebagai templat" pada prompt di panel detail aset.
+              {t("templates.empty")}
             </div>
           </div>
         ) : (

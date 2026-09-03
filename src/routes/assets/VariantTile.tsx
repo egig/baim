@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Generation } from "../../lib/tauri";
+import { useT } from "../../lib/i18n";
 import { IconAlertTriangle, IconLoader2 } from "../../lib/icons";
 
 /** A generated variant shown in the detail panel's lineage section. Succeeded →
@@ -15,11 +16,12 @@ export const VariantTile = memo(function VariantTile({
   srcPath?: string;
   onOpen: (path: string) => void;
 }) {
+  const { t } = useT();
   const clickable = gen.status === "succeeded" && !!gen.output_path;
   return (
     <div
       onClick={clickable ? () => onOpen(gen.output_path!) : undefined}
-      title={gen.status === "failed" ? gen.error ?? "Gagal" : gen.prompt}
+      title={gen.status === "failed" ? gen.error ?? t("detail.failed") : gen.prompt}
       style={{
         position: "relative",
         width: 84,
@@ -95,7 +97,7 @@ export const VariantTile = memo(function VariantTile({
               WebkitBoxOrient: "vertical",
             }}
           >
-            {gen.error ?? "Gagal"}
+            {gen.error ?? t("detail.failed")}
           </span>
         </div>
       )}

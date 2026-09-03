@@ -11,6 +11,7 @@ import {
 import { activeWorkspaceQuery, generationsQuery, imagesQuery } from "../lib/queries";
 import { Button, ImageViewer, useEscapeLayer } from "../root";
 import { Segmented } from "../components/Segmented";
+import { localeTag, useT, type TFn } from "../lib/i18n";
 import { IconX, IconLoader2 } from "../lib/icons";
 
 /** Which generation states the list is filtered to. */
@@ -21,10 +22,8 @@ type StatusFilter = "all" | "queued" | "pending" | "succeeded" | "failed";
  *  distinct message rather than the raw generic-looking string. */
 const OUT_OF_CREDITS = "OUT_OF_CREDITS";
 
-function errorLabel(error: string): string {
-  return error === OUT_OF_CREDITS
-    ? "Kredit habis — tambah kredit di Pengaturan"
-    : error;
+function errorLabel(error: string, t: TFn): string {
+  return error === OUT_OF_CREDITS ? t("history.outOfCredits") : error;
 }
 
 /** Trim, collapse whitespace, and truncate a prompt to a short preview on a word
@@ -39,7 +38,7 @@ function shortPrompt(text: string): string {
 
 function fmtWhen(seconds: number): string {
   if (!seconds) return "—";
-  return new Date(seconds * 1000).toLocaleString("id-ID", {
+  return new Date(seconds * 1000).toLocaleString(localeTag(), {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -47,25 +46,29 @@ function fmtWhen(seconds: number): string {
   });
 }
 
-/** Visual treatment per status: label + colors for the pill. */
+/** Visual treatment per status: an i18n label key + colors for the pill. */
 function statusStyle(status: Generation["status"]): {
-  label: string;
+  labelKey: string;
   color: string;
   bg: string;
 } {
   switch (status) {
     case "queued":
-      return { label: "Antre", color: "var(--ink-500)", bg: "var(--fill-1)" };
+      return {
+        labelKey: "status.queued",
+        color: "var(--ink-500)",
+        bg: "var(--fill-1)",
+      };
     case "pending":
       return {
-        label: "Berjalan",
+        labelKey: "status.pending",
         color: "var(--indigo-600)",
         bg: "var(--indigo-100)",
       };
     case "succeeded":
-      return { label: "Selesai", color: "#15803d", bg: "#dcfce7" };
+      return { labelKey: "status.succeeded", color: "#15803d", bg: "#dcfce7" };
     case "failed":
-      return { label: "Gagal", color: "#b91c1c", bg: "#fee2e2" };
+      return { labelKey: "status.failed", color: "#b91c1c", bg: "#fee2e2" };
   }
 }
 
@@ -137,6 +140,7 @@ function GenerationDetail({
   onViewImage: (src: string) => void;
   onRetry: (id: string) => void;
 }) {
+  const { t } = useT();
   // Escape closes the panel — layered, so it wins over the enclosing dialog
   // and loses to a lightbox opened on top of it.
   useEscapeLayer(onClose);
@@ -182,7 +186,7 @@ function GenerationDetail({
         }}
       >
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
-          Detail generasi
+          {t("detail.genDetailTitle")}
         </span>
         <div
           onClick={onClose}
@@ -274,7 +278,7 @@ function GenerationDetail({
               />
             </div>
             <span style={{ fontSize: 11.5, color: "var(--ink-500)" }}>
-              Dari sumber:{" "}
+              {t("detail.fromSource")}{" "}
               <span style={{ color: "var(--ink-700)", fontWeight: 500 }}>
                 {sourceImg ? sourceImg.title ?? sourceImg.filename : "—"}
               </span>
@@ -303,7 +307,7 @@ function GenerationDetail({
                 background: badge.bg,
               }}
             >
-              {badge.label}
+              {t(badge.labelKey)}
             </span>
             <span
               style={{
@@ -331,7 +335,7 @@ function GenerationDetail({
         {/* Failed → error box; otherwise the live provider log (when present). */}
         {gen.status === "failed" ? (
           <div style={{ marginTop: 16 }}>
-            <SectionLabel>Kesalahan</SectionLabel>
+            <SectionLabel>{t("detail.errorLabel")}</SectionLabel>
             <div
               style={{
                 fontFamily: "var(--font-mono)",
@@ -346,13 +350,13 @@ function GenerationDetail({
                 wordBreak: "break-word",
               }}
             >
-              {errorLabel(gen.error ?? "Gagal")}
+              {errorLabel(gen.error ?? t("detail.failed"), t)}
             </div>
           </div>
         ) : (
           logs && (
             <div style={{ marginTop: 16 }}>
-              <SectionLabel>Log</SectionLabel>
+              <SectionLabel>{t("detail.logLabel")}</SectionLabel>
               <pre
                 ref={logRef}
                 style={{
@@ -385,7 +389,7 @@ function GenerationDetail({
                 variant="primary"
                 onClick={() => onOpenImage(gen.output_path!)}
               >
-                Buka gambar
+                {t("detail.openImage")}
               </Button>
             ) : (
               <Button
@@ -393,7 +397,7 @@ function GenerationDetail({
                 disabled={busy}
                 onClick={() => onRetry(gen.id)}
               >
-                Ulangi
+                {t("common.retry")}
               </Button>
             )}
           </div>
@@ -404,6 +408,7 @@ function GenerationDetail({
 }
 
 export default function Generations() {
+  const { t } = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
@@ -530,7 +535,7 @@ export default function Generations() {
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>
-          Riwayat
+          {t("history.title")}
         </div>
         <span
           style={{
@@ -553,11 +558,11 @@ export default function Generations() {
 
         <Segmented
           options={[
-            { value: "all", label: "Semua" },
-            { value: "queued", label: "Antre" },
-            { value: "pending", label: "Berjalan" },
-            { value: "succeeded", label: "Selesai" },
-            { value: "failed", label: "Gagal" },
+            { value: "all", label: t("history.filterAll") },
+            { value: "queued", label: t("history.filterQueued") },
+            { value: "pending", label: t("history.filterPending") },
+            { value: "succeeded", label: t("history.filterSucceeded") },
+            { value: "failed", label: t("history.filterFailed") },
           ]}
           value={filter}
           onChange={setFilter}
@@ -567,12 +572,12 @@ export default function Generations() {
 
         {filter === "failed" && failed.length > 0 && (
           <Button variant="outline" disabled={busy} onClick={onRetryAllFailed}>
-            Ulangi semua gagal
+            {t("history.retryAllFailed")}
           </Button>
         )}
         {queuedCount > 0 && (
           <Button variant="danger" disabled={busy} onClick={onClearQueue}>
-            Kosongkan antrean
+            {t("history.clearQueue")}
           </Button>
         )}
       </div>
@@ -597,8 +602,8 @@ export default function Generations() {
             }}
           >
             {generations.length === 0
-              ? "Belum ada generasi."
-              : "Tidak ada yang cocok dengan filter."}
+              ? t("history.empty")
+              : t("history.emptyFilter")}
           </div>
         ) : (
           <div style={{ padding: "0 0 32px" }}>
@@ -622,9 +627,9 @@ export default function Generations() {
                 color: "var(--ink-400)",
               }}
             >
-              <div>Waktu</div>
-              <div>Sumber</div>
-              <div style={{ textAlign: "right" }}>Status</div>
+              <div>{t("history.colTime")}</div>
+              <div>{t("history.colSource")}</div>
+              <div style={{ textAlign: "right" }}>{t("history.colStatus")}</div>
             </div>
 
             {visible.map((g) => {
@@ -772,7 +777,7 @@ export default function Generations() {
                         }}
                       >
                         {g.status === "failed" && g.error ? (
-                          <span style={{ color: "#b91c1c" }}>{errorLabel(g.error)}</span>
+                          <span style={{ color: "#b91c1c" }}>{errorLabel(g.error, t)}</span>
                         ) : (
                           shortPrompt(g.prompt)
                         )}
@@ -810,7 +815,7 @@ export default function Generations() {
                           cursor: busy ? "not-allowed" : "pointer",
                         }}
                       >
-                        Ulangi
+                        {t("common.retry")}
                       </button>
                     )}
                     <span
@@ -825,7 +830,7 @@ export default function Generations() {
                         background: badge.bg,
                       }}
                     >
-                      {badge.label}
+                      {t(badge.labelKey)}
                     </span>
                   </div>
                 </div>

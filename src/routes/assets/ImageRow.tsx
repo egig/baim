@@ -2,6 +2,7 @@ import { memo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ImageEntry } from "../../lib/tauri";
 import { displayName, fmtDate, fmtSize } from "./helpers";
+import { useT } from "../../lib/i18n";
 import type { Dims } from "./types";
 
 /** A single image rendered as a detailed row for the list view: thumbnail,
@@ -21,6 +22,7 @@ export const ImageRow = memo(function ImageRow({
   onSelect: (path: string, additive: boolean) => void;
   onLoad: (path: string, w: number, h: number) => void;
 }) {
+  const { t } = useT();
   return (
     <div
       onClick={(e) => onSelect(img.path, e.metaKey || e.ctrlKey)}
@@ -101,7 +103,7 @@ export const ImageRow = memo(function ImageRow({
               background: isAi ? "var(--indigo-100)" : "var(--fill-1)",
             }}
           >
-            {isAi ? "AI" : "Sumber"}
+            {isAi ? t("assets.aiBadge") : t("assets.sourceBadge")}
           </span>
         </div>
         <div

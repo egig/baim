@@ -33,6 +33,7 @@ import { AssetToolbar } from "./AssetToolbar";
 import { BulkPanel } from "./BulkPanel";
 import { DetailPanel } from "./DetailPanel";
 import { fileToDataUri } from "../../lib/image";
+import { localeTag, useT } from "../../lib/i18n";
 import { displayName } from "./helpers";
 import type { AssetFilter, AssetView, Dims, SortDir, SortKey } from "./types";
 import { SORT_OPTIONS } from "./helpers";
@@ -53,6 +54,7 @@ export default function Assets() {
   const fileRef = useRef<HTMLInputElement>(null);
   const location = useLocation();
   const { openSettings } = useShell();
+  const { t } = useT();
 
   const qc = useQueryClient();
   const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
@@ -141,7 +143,7 @@ export default function Assets() {
     const sorted = [...visibleImages];
     sorted.sort((a, b) => {
       if (sortKey === "name") {
-        const cmp = displayName(a).localeCompare(displayName(b), "id", {
+        const cmp = displayName(a).localeCompare(displayName(b), localeTag(), {
           sensitivity: "base",
           numeric: true,
         });
@@ -348,7 +350,7 @@ export default function Assets() {
   async function generate() {
     if (generating) return;
     if (!apiKey) {
-      setError(`Kunci API ${providerLabel} belum diatur.`);
+      setError(t("assets.apiKeyMissing", { provider: providerLabel }));
       return;
     }
     if (!variantPrompt.trim()) return;
@@ -380,7 +382,7 @@ export default function Assets() {
   async function generateFromTemplates() {
     if (generating || selectedTemplates.size === 0) return;
     if (!apiKey) {
-      setError(`Kunci API ${providerLabel} belum diatur.`);
+      setError(t("assets.apiKeyMissing", { provider: providerLabel }));
       return;
     }
     if (!selectedPath) return;
@@ -421,7 +423,7 @@ export default function Assets() {
       return;
     }
     if (!apiKey) {
-      setError(`Kunci API ${providerLabel} belum diatur.`);
+      setError(t("assets.apiKeyMissing", { provider: providerLabel }));
       return;
     }
 
@@ -452,10 +454,10 @@ export default function Assets() {
 
   async function del() {
     if (!selectedPath || deleting) return;
-    const confirmed = await ask(
-      "Hapus aset ini secara permanen? Tindakan ini tidak bisa dibatalkan.",
-      { title: "Hapus aset", kind: "warning" }
-    );
+    const confirmed = await ask(t("confirm.deleteAssetOne"), {
+      title: t("confirm.deleteAssetTitle"),
+      kind: "warning",
+    });
     if (!confirmed) return;
     setDeleting(true);
     setError(null);
@@ -473,10 +475,10 @@ export default function Assets() {
   async function delBulk() {
     if (selectedPaths.size === 0 || deleting) return;
     const count = selectedPaths.size;
-    const confirmed = await ask(
-      `Hapus ${count} aset secara permanen? Tindakan ini tidak bisa dibatalkan.`,
-      { title: "Hapus aset", kind: "warning" }
-    );
+    const confirmed = await ask(t("confirm.deleteAssetMany", { count }), {
+      title: t("confirm.deleteAssetTitle"),
+      kind: "warning",
+    });
     if (!confirmed) return;
     setDeleting(true);
     setError(null);
@@ -509,7 +511,9 @@ export default function Assets() {
     : null;
 
   const generateDisabled = generating || !variantPrompt.trim();
-  const generateLabel = generating ? "Menghasilkan…" : "Hasilkan varian";
+  const generateLabel = generating
+    ? t("detail.generatingShort")
+    : t("detail.generateVariant");
 
   // The right panel shows the bulk picker once ≥1 image is picked, otherwise
   // the single-asset detail. Both shrink the grid.

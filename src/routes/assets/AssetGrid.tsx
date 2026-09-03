@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Generation, ImageEntry } from "../../lib/tauri";
 import { Button } from "../../root";
+import { useT } from "../../lib/i18n";
 import { ImageCard } from "./ImageCard";
 import { ImageRow } from "./ImageRow";
 import { PendingCard } from "./PendingCard";
@@ -67,6 +68,7 @@ export function AssetGrid({
   isAi: (path: string) => boolean;
   onUploadClick: () => void;
 }) {
+  const { t } = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
   // `panelOpen` resizes the scroll container in the same commit; pass it so the
   // width (and thus column count) is re-measured before paint, avoiding a
@@ -125,13 +127,13 @@ export function AssetGrid({
             textAlign: "center",
           }}
         >
-          <div style={{ fontSize: 13, color: "var(--ink-500)" }}>Belum ada aset.</div>
-          <div style={{ fontSize: 12 }}>
-            Import gambar produk untuk membuat varian pertama.
+          <div style={{ fontSize: 13, color: "var(--ink-500)" }}>
+            {t("assets.emptyNoAssets")}
           </div>
+          <div style={{ fontSize: 12 }}>{t("assets.emptyImportHint")}</div>
           <div style={{ marginTop: 4 }}>
             <Button variant="primary" onClick={onUploadClick}>
-              Import gambar
+              {t("assets.import")}
             </Button>
           </div>
         </div>
@@ -148,10 +150,10 @@ export function AssetGrid({
         >
           <div style={{ fontSize: 13, color: "var(--ink-500)" }}>
             {filter === "source"
-              ? "Tidak ada gambar sumber."
+              ? t("assets.emptyNoSource")
               : filter === "novariant"
-              ? "Semua gambar sumber sudah punya varian."
-              : "Belum ada gambar AI."}
+              ? t("assets.emptyAllHaveVariants")
+              : t("assets.emptyNoAi")}
           </div>
         </div>
       ) : (

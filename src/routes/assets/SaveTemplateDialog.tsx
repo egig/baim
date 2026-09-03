@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog } from "../../root";
 import { IconX } from "../../lib/icons";
+import { useT } from "../../lib/i18n";
 import { templatesQuery } from "../../lib/queries";
 import { saveTemplate } from "../../lib/tauri";
 
@@ -41,6 +42,7 @@ export function SaveTemplateDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useT();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -77,7 +79,7 @@ export function SaveTemplateDialog({
         }}
       >
         <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>
-          Simpan sebagai templat
+          {t("templates.saveDialogTitle")}
         </span>
         <div
           onClick={onClose}
@@ -106,20 +108,20 @@ export function SaveTemplateDialog({
       >
         <div>
           <label style={labelStyle} htmlFor="template-name">
-            Nama templat
+            {t("templates.nameLabel")}
           </label>
           <input
             id="template-name"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="mis. Latar putih studio"
+            placeholder={t("templates.namePlaceholder")}
             style={inputStyle}
           />
         </div>
         <div>
           <label style={labelStyle} htmlFor="template-prompt">
-            Prompt
+            {t("templates.promptLabel")}
           </label>
           <textarea
             id="template-prompt"
@@ -142,10 +144,10 @@ export function SaveTemplateDialog({
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Button variant="primary" disabled={disabled} onClick={save}>
-            {saving ? "Menyimpan…" : "Simpan templat"}
+            {saving ? t("common.saving") : t("templates.saveTemplate")}
           </Button>
           <Button variant="ghost" disabled={saving} onClick={onClose}>
-            Batal
+            {t("common.cancel")}
           </Button>
         </div>
       </div>

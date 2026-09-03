@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "../../lib/i18n";
 import { IconPencil, IconPhoto, IconTrash, IconX } from "../../lib/icons";
 import type { PickerTemplate } from "../../lib/templates";
 
@@ -19,6 +20,7 @@ export function TemplateTile({
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const { t: tr } = useT();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(t.name);
@@ -93,7 +95,7 @@ export function TemplateTile({
                 setDraftName(t.name);
                 setRenaming(true);
               }}
-              title="Ganti nama"
+              title={tr("templatePicker.rename")}
               style={{
                 width: 20,
                 height: 20,
@@ -113,7 +115,7 @@ export function TemplateTile({
                 e.stopPropagation();
                 onDelete(t.id);
               }}
-              title="Hapus templat"
+              title={tr("templatePicker.deleteTemplate")}
               style={{
                 width: 20,
                 height: 20,

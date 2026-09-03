@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "../../lib/i18n";
 import { IconPencil, IconPhoto, IconTrash } from "../../lib/icons";
 import type { PickerTemplate } from "../../lib/templates";
 
@@ -16,6 +17,7 @@ export function TemplateCard({
   onEdit: () => void;
   onDelete: (id: string) => void;
 }) {
+  const { t: tr } = useT();
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -66,7 +68,7 @@ export function TemplateCard({
         >
           <button
             type="button"
-            title="Edit templat"
+            title={tr("templates.editTemplate")}
             onClick={onEdit}
             style={iconBtn}
           >
@@ -74,7 +76,7 @@ export function TemplateCard({
           </button>
           <button
             type="button"
-            title="Hapus templat"
+            title={tr("templates.deleteTemplate")}
             onClick={() => onDelete(t.id)}
             style={{ ...iconBtn, color: "var(--red-600)" }}
           >

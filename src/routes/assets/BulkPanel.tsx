@@ -1,4 +1,5 @@
 import { Button } from "../../root";
+import { useT } from "../../lib/i18n";
 import { IconSparkles, IconTrash } from "../../lib/icons";
 import { TemplatePicker } from "./TemplatePicker";
 import { Segmented } from "../../components/Segmented";
@@ -34,6 +35,7 @@ export function BulkPanel({
   onDeleteBulk: () => void;
   error: string | null;
 }) {
+  const { t } = useT();
   return (
     <div
       style={{
@@ -56,7 +58,7 @@ export function BulkPanel({
         }}
       >
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
-          Aksi massal · {selectedCount} gambar
+          {t("bulk.title", { count: selectedCount })}
         </span>
         <div
           onClick={onClearSelection}
@@ -67,7 +69,7 @@ export function BulkPanel({
             cursor: "pointer",
           }}
         >
-          Bersihkan
+          {t("bulk.clearSelection")}
         </div>
       </div>
 
@@ -82,7 +84,7 @@ export function BulkPanel({
             marginBottom: 10,
           }}
         >
-          Pilih templat
+          {t("bulk.pickTemplateLabel")}
         </div>
 
         <TemplatePicker
@@ -101,7 +103,7 @@ export function BulkPanel({
             marginBottom: 10,
           }}
         >
-          Mode generate
+          {t("bulk.generateModeLabel")}
         </div>
         <Segmented<ApiMode>
           options={[
@@ -120,13 +122,18 @@ export function BulkPanel({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {selectedCount} gambar × {selectedTemplates.size} templat ={" "}
-          <strong style={{ color: "var(--ink-800)" }}>{jobCount}</strong> tugas
+          {t("bulk.equation", {
+            images: selectedCount,
+            templates: selectedTemplates.size,
+            jobs: jobCount,
+          })}
         </div>
 
         <Button variant="primary" disabled={generating || jobCount === 0} onClick={onGenerateBulk}>
           <IconSparkles size={14} color="#fff" />
-          {generating ? "Mengantre…" : `Hasilkan ${jobCount} varian`}
+          {generating
+            ? t("bulk.queueing")
+            : t("bulk.generateN", { count: jobCount })}
         </Button>
 
         {error && (
@@ -150,8 +157,7 @@ export function BulkPanel({
             lineHeight: 1.45,
           }}
         >
-          Tugas masuk antrean dan diproses maksimal 3 sekaligus. Pantau di halaman
-          Antrean.
+          {t("bulk.queueNote")}
         </div>
       </div>
 
@@ -160,7 +166,9 @@ export function BulkPanel({
       <div style={{ padding: "16px 18px" }}>
         <Button variant="danger" disabled={deleting} onClick={onDeleteBulk}>
           <IconTrash size={14} color="var(--red-600)" stroke={1.2} />
-          {deleting ? "Menghapus…" : `Hapus ${selectedCount} gambar`}
+          {deleting
+            ? t("bulk.deleting")
+            : t("bulk.deleteN", { count: selectedCount })}
         </Button>
       </div>
     </div>

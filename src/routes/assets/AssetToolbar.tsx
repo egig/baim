@@ -8,14 +8,15 @@ import {
   IconDownload
 } from "../../lib/icons";
 import { SORT_OPTIONS } from "./helpers";
+import { useT } from "../../lib/i18n";
 import type { AssetFilter, AssetView } from "./types";
 import { DropdownMenu } from "./DropdownMenu";
 
-const FILTER_OPTIONS: { value: AssetFilter; label: string }[] = [
-  { value: "all", label: "Semua" },
-  { value: "source", label: "Sumber" },
-  { value: "ai", label: "AI" },
-  { value: "novariant", label: "Tanpa Varian" },
+const FILTER_OPTIONS: { value: AssetFilter; labelKey: string }[] = [
+  { value: "all", labelKey: "assets.filterAll" },
+  { value: "source", labelKey: "assets.filterSource" },
+  { value: "ai", labelKey: "assets.filterAi" },
+  { value: "novariant", labelKey: "assets.filterNoVariant" },
 ];
 
 /** Top toolbar for the asset library: page title, origin filter and sort as
@@ -46,6 +47,15 @@ export function AssetToolbar({
   onViewChange: (v: AssetView) => void;
   onUploadClick: () => void;
 }) {
+  const { t } = useT();
+  const filterOptions = FILTER_OPTIONS.map((o) => ({
+    value: o.value,
+    label: t(o.labelKey),
+  }));
+  const sortOptions = SORT_OPTIONS.map((o) => ({
+    value: o.value,
+    label: t(o.labelKey),
+  }));
   return (
     <div
       style={{
@@ -69,7 +79,7 @@ export function AssetToolbar({
           flexShrink: 0,
         }}
       >
-        Semua Berkas
+        {t("assets.title")}
       </div>
       <span
         style={{
@@ -92,10 +102,10 @@ export function AssetToolbar({
 
       <DropdownMenu
         icon={<IconFilter size={13} stroke={1.8} />}
-        idleLabel="Filter"
-        title="Filter asal gambar"
+        idleLabel={t("assets.filter")}
+        title={t("assets.filterTitle")}
         iconOnly
-        options={FILTER_OPTIONS}
+        options={filterOptions}
         value={filter}
         onChange={onFilterChange}
         highlightWhenActive={(v) => v !== "all"}
@@ -104,7 +114,7 @@ export function AssetToolbar({
       <input
         value={search}
         onChange={(e) => onSearchChange(e.target.value)}
-        placeholder="Cari nama atau prompt…"
+        placeholder={t("assets.searchPlaceholder")}
         style={{
           height: 26,
           width: 200,
@@ -124,18 +134,18 @@ export function AssetToolbar({
 
       <DropdownMenu
         icon={<IconArrowsSort size={13} stroke={1.8} />}
-        idleLabel="Urutkan"
-        title="Urutkan"
+        idleLabel={t("assets.sort")}
+        title={t("assets.sortTitle")}
         iconOnly
-        options={SORT_OPTIONS}
+        options={sortOptions}
         value={sortValue}
         onChange={onSortChange}
       />
 
       <Segmented
         options={[
-          { value: "grid", label: <IconLayoutGrid size={14} />, title: "Tampilan petak" },
-          { value: "list", label: <IconList size={14} />, title: "Tampilan daftar" },
+          { value: "grid", label: <IconLayoutGrid size={14} />, title: t("assets.gridView") },
+          { value: "list", label: <IconList size={14} />, title: t("assets.listView") },
         ]}
         value={view}
         onChange={onViewChange}
@@ -143,7 +153,7 @@ export function AssetToolbar({
 
       <Button variant="outline" onClick={onUploadClick}>
         <IconDownload size={14} color="var(--ink-700)" stroke={1.3} />
-        Import gambar
+        {t("assets.import")}
       </Button>
     </div>
   );

@@ -9,6 +9,8 @@ import {
   type ProviderInfo,
 } from "../lib/tauri";
 import { setConcurrencyCeiling } from "../lib/queries";
+import { LANGS, useT } from "../lib/i18n";
+import { Segmented } from "../components/Segmented";
 import { IconX, IconChevronDown } from "../lib/icons";
 
 const styles = {
@@ -141,7 +143,25 @@ const styles = {
   },
 };
 
+function LanguageSection() {
+  const { lang, setLang, t } = useT();
+  return (
+    <>
+      <div>
+        <div style={styles.heading}>{t("lang.label")}</div>
+        <p style={styles.sub}>{t("lang.desc")}</p>
+      </div>
+      <Segmented
+        options={LANGS.map((l) => ({ value: l, label: t(`lang.${l}`) }))}
+        value={lang}
+        onChange={setLang}
+      />
+    </>
+  );
+}
+
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
+  const { t } = useT();
   const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [stored, setStored] = useState(false);
@@ -192,23 +212,26 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   return (
     <>
       <div>
-        <div style={styles.heading}>{provider.label} API Key</div>
+        <div style={styles.heading}>
+          {t("settings.apiKeyHeading", { provider: provider.label })}
+        </div>
         <p style={styles.sub}>
-          Your key is stored locally on this machine and never sent anywhere
-          except directly to {provider.label}'s API.
+          {t("settings.apiKeyDesc", { provider: provider.label })}
         </p>
       </div>
 
       <div>
         <label htmlFor="api-key" style={styles.label}>
-          API Key
+          {t("settings.apiKeyLabel")}
         </label>
         <input
           id="api-key"
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={stored ? "•••••••• (saved)" : provider.key_hint}
+          placeholder={
+            stored ? t("settings.savedPlaceholder") : provider.key_hint
+          }
           style={styles.input}
         />
       </div>
@@ -223,7 +246,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
             ...(apiKey.trim() ? {} : styles.btnPrimaryDisabled),
           }}
         >
-          {saved ? "Saved!" : "Save"}
+          {saved ? t("common.saved") : t("common.save")}
         </button>
         <button
           onClick={handleClear}
@@ -234,21 +257,21 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
             ...(stored ? {} : styles.btnPrimaryDisabled),
           }}
         >
-          Clear
+          {t("settings.clear")}
         </button>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
 
       <div style={styles.footer}>
-        Don't have a key?{" "}
+        {t("settings.noKeyQuestion")}{" "}
         <a
           href={provider.key_url}
           target="_blank"
           rel="noopener noreferrer"
           style={styles.link}
         >
-          Get one from {provider.label}
+          {t("settings.getKeyFrom", { provider: provider.label })}
         </a>
       </div>
     </>
@@ -256,6 +279,7 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
 }
 
 function AdvancedSection() {
+  const { t } = useT();
   const [expanded, setExpanded] = useState(false);
   const [value, setValue] = useState<number | "">("");
   const [saved, setSaved] = useState(false);
@@ -294,7 +318,7 @@ function AdvancedSection() {
             transition: "transform .12s ease",
           }}
         />
-        <span style={styles.toggleLabel}>Advanced</span>
+        <span style={styles.toggleLabel}>{t("settings.advanced")}</span>
       </div>
 
       {expanded && (
@@ -303,7 +327,7 @@ function AdvancedSection() {
         >
           <div>
             <label htmlFor="max-concurrency" style={styles.label}>
-              Max concurrent generations
+              {t("settings.maxConcurrent")}
             </label>
             <input
               id="max-concurrency"
@@ -317,10 +341,7 @@ function AdvancedSection() {
               style={styles.input}
             />
             <p style={{ ...styles.sub, marginTop: 6 }}>
-              A ceiling, not a fixed number — the app ramps concurrency up
-              toward this automatically and backs off on rate limits. Gemini
-              caps concurrent batch requests around 100, so values near that
-              only help on higher-tier accounts.
+              {t("settings.maxConcurrentDesc")}
             </p>
           </div>
 
@@ -334,7 +355,7 @@ function AdvancedSection() {
                 ...(value === "" ? styles.btnPrimaryDisabled : {}),
               }}
             >
-              {saved ? "Saved!" : "Save"}
+              {saved ? t("common.saved") : t("common.save")}
             </button>
           </div>
 
@@ -346,6 +367,7 @@ function AdvancedSection() {
 }
 
 export default function Settings({ onClose }: { onClose: () => void }) {
+  const { t } = useT();
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
 
   useEffect(() => {
@@ -357,12 +379,15 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   return (
     <>
       <div style={styles.header}>
-        <h1 style={styles.title}>Pengaturan</h1>
+        <h1 style={styles.title}>{t("settings.title")}</h1>
         <div onClick={onClose} style={styles.closeBtn}>
           <IconX size={12} />
         </div>
       </div>
       <div style={styles.body}>
+        <div style={styles.card}>
+          <LanguageSection />
+        </div>
         {provider && (
           <div style={styles.card}>
             <ApiKeySection provider={provider} />

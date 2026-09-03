@@ -1,3 +1,5 @@
+import { useT } from "../../lib/i18n";
+
 /** Banner shown when the active provider has no API key saved yet — generation
  *  is gated on it. `onOpenSettings` opens the shell's settings dialog. */
 export function ApiKeyBanner({
@@ -7,6 +9,7 @@ export function ApiKeyBanner({
   providerLabel: string;
   onOpenSettings: () => void;
 }) {
+  const { t } = useT();
   return (
     <div
       style={{
@@ -17,7 +20,7 @@ export function ApiKeyBanner({
         color: "var(--ink-700)",
       }}
     >
-      Kunci API {providerLabel} belum diatur — pembuatan varian butuh kunci.{" "}
+      {t("assets.apiKeyBanner", { provider: providerLabel })}{" "}
       <span
         onClick={onOpenSettings}
         style={{
@@ -27,7 +30,7 @@ export function ApiKeyBanner({
           textDecoration: "underline",
         }}
       >
-        Atur sekarang
+        {t("assets.apiKeyBannerAction")}
       </span>
       .
     </div>

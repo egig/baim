@@ -9,6 +9,7 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { activeWorkspaceQuery, imagesQuery, generationsQuery } from "../lib/queries";
+import { useT } from "../lib/i18n";
 import { useEscapeLayer } from "../root";
 import { IconChevronDown, IconFolder, IconX } from "../lib/icons";
 
@@ -27,6 +28,7 @@ export function WorkspaceSwitcher({
 }: {
   activeWorkspace: WorkspaceInfo;
 }) {
+  const { t } = useT();
   const qc = useQueryClient();
   const [open_, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -253,7 +255,7 @@ export function WorkspaceSwitcher({
                   <button
                     type="button"
                     disabled={busy}
-                    title="Hapus dari daftar"
+                    title={t("workspace.removeFromList")}
                     onClick={(e) => {
                       e.stopPropagation();
                       void onRemoveFromList(ws.path);
@@ -301,7 +303,7 @@ export function WorkspaceSwitcher({
                         cursor: "pointer",
                       }}
                     >
-                      Hapus dari daftar
+                      {t("workspace.removeFromList")}
                     </button>
                   </div>
                 )}
@@ -335,7 +337,7 @@ export function WorkspaceSwitcher({
               color: "var(--indigo-600)",
             }}
           >
-            Buka Folder…
+            {t("workspace.openFolder")}
           </button>
         </div>,
         document.body

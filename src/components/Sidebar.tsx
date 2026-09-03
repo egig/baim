@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router";
 import type { WorkspaceInfo } from "../lib/tauri";
+import { useT } from "../lib/i18n";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import {
   IconLayoutGrid,
@@ -11,21 +12,21 @@ import {
 
 /** Primary navigation, one entry per top-level route. `end` on "/" so it isn't
  *  marked active for `/templates` and `/history` too. */
-const NAV: { to: string; label: string; icon: ReactNode; end?: boolean }[] = [
+const NAV: { to: string; labelKey: string; icon: ReactNode; end?: boolean }[] = [
   {
     to: "/",
-    label: "Semua Berkas",
+    labelKey: "nav.allFiles",
     icon: <IconLayoutGrid size={16} stroke={1.6} />,
     end: true,
   },
   {
     to: "/templates",
-    label: "Templat",
+    labelKey: "nav.templates",
     icon: <IconStack2 size={16} stroke={1.6} />,
   },
   {
     to: "/history",
-    label: "Riwayat",
+    labelKey: "nav.history",
     icon: <IconHistory size={16} stroke={1.6} />,
   },
 ];
@@ -62,6 +63,7 @@ export function Sidebar({
   activeCount: number;
   onOpenSettings: () => void;
 }) {
+  const { t } = useT();
   return (
     <nav
       style={{
@@ -125,7 +127,7 @@ export function Sidebar({
             }
           >
             {item.icon}
-            <span style={{ flex: 1 }}>{item.label}</span>
+            <span style={{ flex: 1 }}>{t(item.labelKey)}</span>
             {item.to === "/history" && activeCount > 0 && (
               <span
                 style={{
@@ -157,7 +159,7 @@ export function Sidebar({
           style={rowStyle}
         >
           <IconSettings size={16} stroke={1.6} />
-          <span style={{ flex: 1 }}>Pengaturan</span>
+          <span style={{ flex: 1 }}>{t("nav.settings")}</span>
         </button>
       </div>
     </nav>

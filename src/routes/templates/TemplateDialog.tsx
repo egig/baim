@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Dialog } from "../../root";
 import { IconPhoto, IconX } from "../../lib/icons";
+import { useT } from "../../lib/i18n";
 import { templatesQuery } from "../../lib/queries";
 import { fileToDataUri } from "../../lib/image";
 import { createTemplate, updateTemplate } from "../../lib/tauri";
@@ -42,6 +43,7 @@ export function TemplateDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useT();
   const qc = useQueryClient();
   const editing = template !== null;
   const fileRef = useRef<HTMLInputElement>(null);
@@ -108,7 +110,7 @@ export function TemplateDialog({
         }}
       >
         <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink-800)" }}>
-          {editing ? "Edit templat" : "Tambah templat"}
+          {editing ? t("templates.dialogEdit") : t("templates.dialogCreate")}
         </span>
         <div
           onClick={onClose}
@@ -138,27 +140,27 @@ export function TemplateDialog({
       >
         <div>
           <label style={labelStyle} htmlFor="template-name">
-            Nama templat
+            {t("templates.nameLabel")}
           </label>
           <input
             id="template-name"
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="mis. Latar putih studio"
+            placeholder={t("templates.namePlaceholder")}
             style={inputStyle}
           />
         </div>
 
         <div>
           <label style={labelStyle} htmlFor="template-prompt">
-            Prompt
+            {t("templates.promptLabel")}
           </label>
           <textarea
             id="template-prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Deskripsikan hasil yang diinginkan…"
+            placeholder={t("templates.promptPlaceholder")}
             style={{
               ...inputStyle,
               minHeight: 120,
@@ -169,7 +171,7 @@ export function TemplateDialog({
         </div>
 
         <div>
-          <label style={labelStyle}>Gambar pratinjau (opsional)</label>
+          <label style={labelStyle}>{t("templates.previewLabel")}</label>
           <input
             ref={fileRef}
             type="file"
@@ -206,7 +208,9 @@ export function TemplateDialog({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <Button variant="outline" onClick={() => fileRef.current?.click()}>
-                {previewSrc ? "Ganti gambar" : "Pilih gambar"}
+                {previewSrc
+                  ? t("templates.changeImage")
+                  : t("templates.pickImage")}
               </Button>
               {previewDataUri && (
                 <button
@@ -223,7 +227,7 @@ export function TemplateDialog({
                     textAlign: "left",
                   }}
                 >
-                  Batalkan perubahan gambar
+                  {t("templates.revertImage")}
                 </button>
               )}
             </div>
@@ -239,13 +243,13 @@ export function TemplateDialog({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Button variant="primary" disabled={disabled} onClick={save}>
             {saving
-              ? "Menyimpan…"
+              ? t("common.saving")
               : editing
-              ? "Simpan perubahan"
-              : "Simpan templat"}
+              ? t("templates.saveChanges")
+              : t("templates.saveTemplate")}
           </Button>
           <Button variant="ghost" disabled={saving} onClick={onClose}>
-            Batal
+            {t("common.cancel")}
           </Button>
         </div>
       </div>

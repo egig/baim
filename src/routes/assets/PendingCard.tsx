@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { useT } from "../../lib/i18n";
 import { IconLoader2 } from "../../lib/icons";
 
 /** An in-progress generation: the source image dimmed under a spinning icon,
@@ -9,6 +10,7 @@ export const PendingCard = memo(function PendingCard({
 }: {
   srcPath?: string;
 }) {
+  const { t } = useT();
   return (
     <div style={{ position: "relative" }}>
       <div
@@ -63,7 +65,7 @@ export const PendingCard = memo(function PendingCard({
           textOverflow: "ellipsis",
         }}
       >
-        Menghasilkan…
+        {t("assets.generating")}
       </div>
     </div>
   );

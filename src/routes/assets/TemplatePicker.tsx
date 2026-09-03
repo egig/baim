@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { templatesQuery } from "../../lib/queries";
 import { toPickerTemplates } from "../../lib/templates";
 import { deleteTemplate, renameTemplate } from "../../lib/tauri";
+import { useT } from "../../lib/i18n";
 import { Dialog } from "../../root";
 import { IconBookmarkPlus, IconLayoutGrid } from "../../lib/icons";
 import { TemplateTile } from "./TemplateTile";
@@ -29,6 +30,7 @@ export function TemplatePicker({
   onToggle: (id: string) => void;
   marginBottom?: number;
 }) {
+  const { t } = useT();
   const qc = useQueryClient();
   const { data: saved = [] } = useQuery(templatesQuery);
   const all = useMemo(() => toPickerTemplates(saved), [saved]);
@@ -44,8 +46,8 @@ export function TemplatePicker({
   }
 
   async function handleDelete(id: string) {
-    const confirmed = await ask("Hapus templat ini?", {
-      title: "Hapus templat",
+    const confirmed = await ask(t("templatePicker.confirmDelete"), {
+      title: t("templatePicker.confirmDeleteTitle"),
       kind: "warning",
     });
     if (!confirmed) return;
@@ -78,8 +80,7 @@ export function TemplatePicker({
       >
         <IconBookmarkPlus size={16} color="var(--ink-400)" />
         <span style={{ fontSize: 11.5, color: "var(--ink-500)", lineHeight: 1.45 }}>
-          Belum ada templat. Buat satu lewat "Simpan sebagai templat" pada
-          prompt yang pernah dipakai, atau gunakan tab "Prompt manual".
+          {t("templatePicker.empty")}
         </span>
       </div>
     );
@@ -124,8 +125,8 @@ export function TemplatePicker({
       >
         <IconLayoutGrid size={13} color="var(--ink-500)" />
         {chosen.length > 0
-          ? `Ubah pilihan (${chosen.length})`
-          : "Pilih templat"}
+          ? t("templatePicker.change", { count: chosen.length })
+          : t("templatePicker.pick")}
       </button>
 
       {pickerOpen && (
@@ -146,9 +147,9 @@ export function TemplatePicker({
               color: "var(--ink-800)",
             }}
           >
-            <span>Pilih templat</span>
+            <span>{t("templatePicker.dialogTitle")}</span>
             <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-500)" }}>
-              {selected.size} dipilih
+              {t("templatePicker.selectedCount", { count: selected.size })}
             </span>
           </div>
           <div
@@ -197,7 +198,7 @@ export function TemplatePicker({
                 cursor: "pointer",
               }}
             >
-              Selesai
+              {t("common.done")}
             </button>
           </div>
         </Dialog>

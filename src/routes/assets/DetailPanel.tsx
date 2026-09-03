@@ -16,6 +16,7 @@ import { SaveTemplateDialog } from "./SaveTemplateDialog";
 import { TemplatePicker } from "./TemplatePicker";
 import { VariantTile } from "./VariantTile";
 import { displayName, fmtDate, fmtSize, kindOf } from "./helpers";
+import { useT } from "../../lib/i18n";
 import type { Dims } from "./types";
 
 /** Detail panel width (px) at or above which its header switches to two
@@ -74,6 +75,7 @@ export function DetailPanel({
   deleting: boolean;
   onDelete: () => void;
 }) {
+  const { t } = useT();
   // Panel width, tracked via a callback ref: the panel mounts/unmounts with the
   // selection, so an effect-attached ResizeObserver would miss its element on
   // first open. Drives the responsive two-column (image | metadata) header.
@@ -120,7 +122,7 @@ export function DetailPanel({
         }}
       >
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-800)" }}>
-          Detail aset
+          {t("detail.title")}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
@@ -146,7 +148,7 @@ export function DetailPanel({
             }}
           >
             <IconTrash size={12.5} stroke={1.2} />
-            {deleting ? "Menghapus…" : "Hapus aset"}
+            {deleting ? t("detail.deleting") : t("detail.deleteAsset")}
           </button>
           <div
             onClick={onClose}
@@ -225,7 +227,7 @@ export function DetailPanel({
               </div>
 
               <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 9 }}>
-                <DetailRow label="Jenis">
+                <DetailRow label={t("detail.type")}>
                   <span
                     style={{
                       fontSize: 10,
@@ -240,13 +242,13 @@ export function DetailPanel({
                     {kindOf(image.filename)}
                   </span>
                 </DetailRow>
-                <DetailRow label="Dimensi">
+                <DetailRow label={t("detail.dimensions")}>
                   <Mono>{dim ? `${dim.w}×${dim.h}` : "…"} px</Mono>
                 </DetailRow>
-                <DetailRow label="Ukuran">
+                <DetailRow label={t("detail.size")}>
                   <Mono>{fmtSize(image.size_bytes)}</Mono>
                 </DetailRow>
-                <DetailRow label="Ditambahkan">
+                <DetailRow label={t("detail.added")}>
                   <Mono>{fmtDate(image.created_at)}</Mono>
                 </DetailRow>
               </div>
@@ -273,7 +275,7 @@ export function DetailPanel({
                           marginBottom: 7,
                         }}
                       >
-                        Sumber
+                        {t("detail.source")}
                       </div>
                       <div
                         onClick={() => onSelectSource(sourceImage.path)}
@@ -317,11 +319,11 @@ export function DetailPanel({
                         }}
                       >
                         <div style={{ fontSize: 11.5, color: "var(--ink-500)" }}>
-                          Prompt
+                          {t("detail.prompt")}
                         </div>
                         <div
                           onClick={() => setSavingTemplate(true)}
-                          title="Simpan sebagai templat"
+                          title={t("detail.saveAsTemplate")}
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -333,7 +335,7 @@ export function DetailPanel({
                           }}
                         >
                           <IconBookmarkPlus size={11} />
-                          Simpan sebagai templat
+                          {t("detail.saveAsTemplate")}
                         </div>
                       </div>
                       <div
@@ -381,7 +383,7 @@ export function DetailPanel({
                   }}
                 />
                 <span style={{ fontSize: 11.5, color: "var(--ink-500)" }}>
-                  Varian dihasilkan ({variants.length})
+                  {t("detail.variantsGenerated", { count: variants.length })}
                 </span>
               </div>
               {variantsExpanded && (
@@ -434,7 +436,7 @@ export function DetailPanel({
             }}
           >
             <IconSparkles size={14} color="var(--indigo-600)" />
-            Buat varian
+            {t("detail.createVariant")}
           </button>
         </div>
       ) : (
@@ -467,12 +469,12 @@ export function DetailPanel({
               color="var(--ink-400)"
               style={{ transform: "rotate(0deg)" }}
             />
-            Buat varian
+            {t("detail.createVariant")}
           </div>
           <Segmented
             options={[
-              { value: "template", label: "Templat" },
-              { value: "prompt", label: "Prompt manual" },
+              { value: "template", label: t("detail.tabTemplate") },
+              { value: "prompt", label: t("detail.tabManualPrompt") },
             ]}
             value={varianTab}
             onChange={setVarianTab}
@@ -491,13 +493,15 @@ export function DetailPanel({
               onClick={onGenerateFromTemplates}
             >
               <IconSparkles size={14} color="#fff" />
-              {generating ? "Menghasilkan…" : `Hasilkan ${selectedTemplates.size} varian`}
+              {generating
+                ? t("detail.generatingShort")
+                : t("detail.generateN", { count: selectedTemplates.size })}
             </Button>
           </div>
         ) : (
           <div>
             <textarea
-              placeholder="Jelaskan perubahannya. mis. ganti latar jadi putih bersih, tambah bayangan lembut"
+              placeholder={t("detail.manualPlaceholder")}
               value={variantPrompt}
               onChange={(e) => onVariantPromptChange(e.target.value)}
               style={{
@@ -535,7 +539,7 @@ export function DetailPanel({
                 lineHeight: 1.45,
               }}
             >
-              Varian disimpan sebagai aset baru dan ditautkan ke gambar sumber.
+              {t("detail.variantNote")}
           </div>
         {error && (
           <div

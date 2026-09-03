@@ -60,6 +60,15 @@ Tauri v2 app, two halves over `invoke()`.
   route reads the active workspace.
 - `src/lib/tauri.ts` — single typed bridge to `invoke()` calls. Add new backend
   calls here, not in components.
+- **i18n** (`src/lib/i18n.tsx` + `src/locales/{en,id}.json`) — English + Indonesian
+  UI strings, no library. `I18nProvider` wraps the router in `main.tsx`;
+  components call `const { t } = useT()` and `t("area.key", { count })` (dot-path
+  lookup, `{name}` interpolation, falls back to `id` then the raw key). The
+  choice persists to `localStorage["baim.lang"]`; no saved value → browser locale,
+  defaulting to `id`. Switched from the Settings dialog (`LanguageSection`).
+  Non-component formatters (`helpers.ts` dates/sizes, `localeCompare`) read
+  `localeTag()`/`getLang()` from the same module. **Every user-facing string goes
+  through `t()`** — add the key to *both* locale files.
 - `src/root.tsx` — layout shell: a bare drag-region `Titlebar`, the `Sidebar`,
   and the routed `<Outlet>`. Owns the settings dialog and the `ShellContext`.
   Exports `Button`, `Dialog`, `ImageViewer`, `useEscapeLayer`, `useShell`.
