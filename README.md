@@ -8,11 +8,6 @@ Batch-generate image variants from a source photo and text prompts. Pick a model
 
 - **Upload & manage** source images in a local library
 - **Batch generation** — one source image × many prompts, each becomes its own job
-- **Async polling** — fire-and-forget; images appear in the grid as they finish
-- **Provider abstraction** — Google/Gemini built-in, extensible via the `ImageProvider` trait
-- **Cloud mode** — offload generation to a Cloudflare Workers backend (optional)
-- **Queue system** — submit jobs from the library view, retry failed ones
-- **Database-driven** — SQLite catalog, user-configurable storage directory
 
 ## Quick start
 
