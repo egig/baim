@@ -229,9 +229,3 @@ and the `cloud_api_key`/`cloud_endpoint` settings keys, while
 
 Cargo workspace member. Contains the `ImageProvider` trait + types and the
 `GoogleProvider` implementation. Used by the desktop app (`src-tauri/`).
-
-### Cloud backend
-
-The Cloudflare Workers + D1 + R2 implementation that `RecraftoryProvider`
-(`providers/recraftory.rs`) talks to over REST now lives in a separate project,
-[`sabi-cloud`](../sabi-cloud) — see its README for architecture and commands.

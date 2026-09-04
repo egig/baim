@@ -51,11 +51,3 @@ baim/
 ```
 
 The frontend communicates with the Rust backend via Tauri `invoke()`. Image generation goes through the `ImageProvider` trait — providers register themselves in `all_providers()` and are driven from the settings UI. The active provider and API keys are stored in SQLite; the frontend never sees the key value.
-
-## Cloud backend (optional)
-
-`CloudProvider` (`src-tauri/src/providers/cloud.rs`) can offload generation to
-a REST API instead of calling a model provider directly. The Cloudflare
-Workers implementation of that API lives in a separate project,
-[`sabi-cloud`](../sabi-cloud) — see its README for setup and deploy
-instructions.
