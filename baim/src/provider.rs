@@ -19,10 +19,6 @@ pub struct GenerateRequest {
     pub prompt: String,
     pub image_data_uri: String,
     pub api_key: String,
-    /// For meta-providers (e.g. Cloud) that need to forward a downstream
-    /// provider's API key alongside their own auth key. Direct providers
-    /// (Google, Local) set this to `None`.
-    pub provider_api_key: Option<String>,
     pub mode: ApiMode,
 }
 
@@ -95,12 +91,6 @@ pub trait ImageProvider: Send + Sync {
 
 /// The identifier assumed when none is stored (existing rows, fresh installs).
 pub const DEFAULT_PROVIDER: &str = "google";
-
-/// Sentinel error returned by `RecraftoryProvider::create` when the Recraftory
-/// backend responds 402 (insufficient credit balance), so callers can distinguish
-/// "out of credits" from a generic generation failure without a structured
-/// per-provider error type.
-pub const OUT_OF_CREDITS_ERROR: &str = "OUT_OF_CREDITS";
 
 /// Sentinel error returned by `ImageProvider::create` when the provider
 /// rate-limited the request (e.g. Gemini's 429). Distinct from a generic

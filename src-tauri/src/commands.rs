@@ -81,11 +81,12 @@ pub fn requeue_generation(
 
 #[tauri::command]
 pub async fn refresh_generation(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Generation, String> {
     let ws = active_workspace(&state)?;
-    generation::refresh_generation(&state.registry, &ws.db, &id).await
+    generation::refresh_generation(&app, &state.registry, &ws.db, &id).await
 }
 
 /// Whether the given provider has an API key saved (the value is never returned
@@ -190,39 +191,43 @@ pub async fn save_uploaded_image(
     generation::save_uploaded_image(&ws.db, &data_uri, title.as_deref())
 }
 
-/// The configured Recraftory backend endpoint URL.
-#[tauri::command]
-pub fn get_recraftory_endpoint(state: tauri::State<'_, AppState>) -> Option<String> {
-    state.registry.read_setting("recraftory_endpoint")
+/// The configured OpenAI-compatible endpoint's base URL and model id.
+#[derive(serde::Serialize)]
+pub struct OpenAiCompatibleConfig {
+    pub base_url: Option<String>,
+    pub model: Option<String>,
 }
 
-/// Persist the Recraftory backend endpoint URL and update the RecraftoryProvider config.
+/// The saved Base URL / Model id for the OpenAI-compatible provider.
 #[tauri::command]
-pub fn set_recraftory_endpoint(
+pub fn get_openai_compatible_config(
     state: tauri::State<'_, AppState>,
-    endpoint: String,
+) -> OpenAiCompatibleConfig {
+    OpenAiCompatibleConfig {
+        base_url: state.registry.read_setting("openai_compatible_base_url"),
+        model: state.registry.read_setting("openai_compatible_model"),
+    }
+}
+
+/// Persist the OpenAI-compatible provider's Base URL and Model id and update
+/// its in-memory config.
+#[tauri::command]
+pub fn set_openai_compatible_config(
+    state: tauri::State<'_, AppState>,
+    base_url: String,
+    model: String,
 ) -> Result<(), String> {
-    let endpoint = endpoint.trim().to_string();
-    if endpoint.is_empty() {
+    let base_url = base_url.trim().to_string();
+    let model = model.trim().to_string();
+    if base_url.is_empty() || model.is_empty() {
         return Ok(());
     }
     state
         .registry
-        .write_setting("recraftory_endpoint", &endpoint)?;
-    crate::providers::recraftory::set_recraftory_endpoint(endpoint);
+        .write_setting("openai_compatible_base_url", &base_url)?;
+    state.registry.write_setting("openai_compatible_model", &model)?;
+    crate::providers::openai_compatible::set_config(base_url, model);
     Ok(())
-}
-
-/// The remaining credit balance on the configured Recraftory API key.
-#[tauri::command]
-pub async fn get_recraftory_credit_balance(
-    state: tauri::State<'_, AppState>,
-) -> Result<i64, String> {
-    let api_key = state
-        .registry
-        .read_api_key("recraftory")
-        .ok_or_else(|| "No Recraftory API key configured".to_string())?;
-    crate::providers::recraftory::get_credit_balance(&api_key).await
 }
 
 /// Known workspaces, most-recently-opened first.

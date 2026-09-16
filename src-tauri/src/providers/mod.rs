@@ -1,2 +1,2 @@
 pub mod google;
-pub mod recraftory;
+pub mod openai_compatible;

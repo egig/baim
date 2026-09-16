@@ -31,7 +31,15 @@
     "getKeyFrom": "Dapatkan dari {provider}",
     "advanced": "Lanjutan",
     "maxConcurrent": "Maksimum generasi bersamaan",
-    "maxConcurrentDesc": "Ini batas atas, bukan angka tetap — aplikasi menaikkan konkurensi menuju nilai ini secara otomatis dan menurunkannya saat kena batas laju. Gemini membatasi permintaan batch bersamaan sekitar 100, jadi nilai mendekati itu hanya membantu pada akun tingkat lebih tinggi."
+    "maxConcurrentDesc": "Ini batas atas, bukan angka tetap — aplikasi menaikkan konkurensi menuju nilai ini secara otomatis dan menurunkannya saat kena batas laju. Gemini membatasi permintaan batch bersamaan sekitar 100, jadi nilai mendekati itu hanya membantu pada akun tingkat lebih tinggi.",
+    "providerHeading": "Provider gambar",
+    "providerDesc": "Backend mana yang menghasilkan gambar Anda.",
+    "baseUrlLabel": "Base URL",
+    "baseUrlPlaceholder": "https://openrouter.ai/api/v1",
+    "baseUrlDesc": "Endpoint yang kompatibel dengan OpenAI untuk dipanggil — misalnya OpenRouter, OpenAI sendiri, atau server yang Anda hosting sendiri.",
+    "modelIdLabel": "Model ID",
+    "modelIdPlaceholder": "google/gemini-2.5-flash-image-preview",
+    "modelIdDesc": "ID model persis yang diharapkan endpoint Anda, sebagai model chat completions yang mendukung gambar."
   },
   "assets": {
     "title": "Semua Berkas",
@@ -148,8 +156,7 @@
     "emptyFilter": "Tidak ada yang cocok dengan filter.",
     "colTime": "Waktu",
     "colSource": "Sumber",
-    "colStatus": "Status",
-    "outOfCredits": "Kredit habis — tambah kredit di Pengaturan"
+    "colStatus": "Status"
   },
   "status": {
     "queued": "Antre",

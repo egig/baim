@@ -169,6 +169,24 @@ export async function setApiKey(
   return invoke<void>("set_api_key", { provider: providerId, key });
 }
 
+/** The OpenAI-compatible provider's saved Base URL and Model id, if set. */
+export interface OpenAiCompatibleConfig {
+  base_url: string | null;
+  model: string | null;
+}
+
+export async function getOpenAiCompatibleConfig(): Promise<OpenAiCompatibleConfig> {
+  return invoke<OpenAiCompatibleConfig>("get_openai_compatible_config");
+}
+
+/** Persist the OpenAI-compatible provider's Base URL and Model id. */
+export async function setOpenAiCompatibleConfig(
+  baseUrl: string,
+  model: string
+): Promise<void> {
+  return invoke<void>("set_openai_compatible_config", { baseUrl, model });
+}
+
 /** Save an uploaded image. `title` is the original picked file name, kept for
  *  search/display (the on-disk name is a collision-free uuid). */
 export async function saveImage(

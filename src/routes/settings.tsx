@@ -4,8 +4,12 @@ import {
   listProviders,
   hasApiKey,
   setApiKey as saveApiKey,
+  getActiveProvider,
+  setActiveProvider,
   getMaxConcurrency,
   setMaxConcurrency,
+  getOpenAiCompatibleConfig,
+  setOpenAiCompatibleConfig,
   type ProviderInfo,
 } from "../lib/tauri";
 import { setConcurrencyCeiling } from "../lib/queries";
@@ -160,6 +164,117 @@ function LanguageSection() {
   );
 }
 
+function ProviderSwitcher({
+  providers,
+  activeId,
+  onChange,
+}: {
+  providers: ProviderInfo[];
+  activeId: string;
+  onChange: (id: string) => void;
+}) {
+  const { t } = useT();
+  return (
+    <>
+      <div>
+        <div style={styles.heading}>{t("settings.providerHeading")}</div>
+        <p style={styles.sub}>{t("settings.providerDesc")}</p>
+      </div>
+      <Segmented
+        options={providers.map((p) => ({ value: p.id, label: p.label }))}
+        value={activeId}
+        onChange={onChange}
+      />
+    </>
+  );
+}
+
+/** Base URL + Model id inputs for the OpenAI-compatible provider — the only
+ *  provider whose endpoint and model aren't fixed in code. */
+function OpenAiCompatibleConfigSection() {
+  const { t } = useT();
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getOpenAiCompatibleConfig()
+      .then((cfg) => {
+        if (cancelled) return;
+        setBaseUrl(cfg.base_url ?? "");
+        setModel(cfg.model ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSave() {
+    if (!baseUrl.trim() || !model.trim()) return;
+    setError(null);
+    try {
+      await setOpenAiCompatibleConfig(baseUrl.trim(), model.trim());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  return (
+    <>
+      <div>
+        <label htmlFor="base-url" style={styles.label}>
+          {t("settings.baseUrlLabel")}
+        </label>
+        <input
+          id="base-url"
+          type="text"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder={t("settings.baseUrlPlaceholder")}
+          style={styles.input}
+        />
+        <p style={{ ...styles.sub, marginTop: 6 }}>{t("settings.baseUrlDesc")}</p>
+      </div>
+
+      <div>
+        <label htmlFor="model-id" style={styles.label}>
+          {t("settings.modelIdLabel")}
+        </label>
+        <input
+          id="model-id"
+          type="text"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder={t("settings.modelIdPlaceholder")}
+          style={styles.input}
+        />
+        <p style={{ ...styles.sub, marginTop: 6 }}>{t("settings.modelIdDesc")}</p>
+      </div>
+
+      <div style={styles.row}>
+        <button
+          onClick={handleSave}
+          disabled={!baseUrl.trim() || !model.trim()}
+          style={{
+            ...styles.btn,
+            ...styles.btnPrimary,
+            ...(baseUrl.trim() && model.trim() ? {} : styles.btnPrimaryDisabled),
+          }}
+        >
+          {saved ? t("common.saved") : t("common.save")}
+        </button>
+      </div>
+
+      {error && <p style={styles.error}>{error}</p>}
+    </>
+  );
+}
+
 function ApiKeySection({ provider }: { provider: ProviderInfo }) {
   const { t } = useT();
   const qc = useQueryClient();
@@ -263,17 +378,19 @@ function ApiKeySection({ provider }: { provider: ProviderInfo }) {
 
       {error && <p style={styles.error}>{error}</p>}
 
-      <div style={styles.footer}>
-        {t("settings.noKeyQuestion")}{" "}
-        <a
-          href={provider.key_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={styles.link}
-        >
-          {t("settings.getKeyFrom", { provider: provider.label })}
-        </a>
-      </div>
+      {provider.key_url && (
+        <div style={styles.footer}>
+          {t("settings.noKeyQuestion")}{" "}
+          <a
+            href={provider.key_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={styles.link}
+          >
+            {t("settings.getKeyFrom", { provider: provider.label })}
+          </a>
+        </div>
+      )}
     </>
   );
 }
@@ -368,13 +485,28 @@ function AdvancedSection() {
 
 export default function Settings({ onClose }: { onClose: () => void }) {
   const { t } = useT();
-  const [provider, setProvider] = useState<ProviderInfo | null>(null);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
-    listProviders()
-      .then((providers) => setProvider(providers[0] ?? null))
+    Promise.all([listProviders(), getActiveProvider()])
+      .then(([providers, active]) => {
+        setProviders(providers);
+        setActiveId(providers.some((p) => p.id === active) ? active : providers[0]?.id ?? null);
+      })
       .catch(() => {});
   }, []);
+
+  async function handleProviderChange(id: string) {
+    setActiveId(id);
+    try {
+      await setActiveProvider(id);
+    } catch {
+      /* ignore — the picker still reflects the attempted choice */
+    }
+  }
+
+  const provider = providers.find((p) => p.id === activeId) ?? null;
 
   return (
     <>
@@ -388,9 +520,19 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         <div style={styles.card}>
           <LanguageSection />
         </div>
+        {providers.length > 1 && activeId && (
+          <div style={styles.card}>
+            <ProviderSwitcher
+              providers={providers}
+              activeId={activeId}
+              onChange={handleProviderChange}
+            />
+          </div>
+        )}
         {provider && (
           <div style={styles.card}>
             <ApiKeySection provider={provider} />
+            {provider.id === "openai_compatible" && <OpenAiCompatibleConfigSection />}
           </div>
         )}
         <div style={styles.card}>

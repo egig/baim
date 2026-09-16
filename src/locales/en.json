@@ -31,7 +31,15 @@
     "getKeyFrom": "Get one from {provider}",
     "advanced": "Advanced",
     "maxConcurrent": "Max concurrent generations",
-    "maxConcurrentDesc": "A ceiling, not a fixed number — the app ramps concurrency up toward this automatically and backs off on rate limits. Gemini caps concurrent batch requests around 100, so values near that only help on higher-tier accounts."
+    "maxConcurrentDesc": "A ceiling, not a fixed number — the app ramps concurrency up toward this automatically and backs off on rate limits. Gemini caps concurrent batch requests around 100, so values near that only help on higher-tier accounts.",
+    "providerHeading": "Image provider",
+    "providerDesc": "Which backend generates your images.",
+    "baseUrlLabel": "Base URL",
+    "baseUrlPlaceholder": "https://openrouter.ai/api/v1",
+    "baseUrlDesc": "The OpenAI-compatible endpoint to call — e.g. OpenRouter, OpenAI itself, or a self-hosted server.",
+    "modelIdLabel": "Model ID",
+    "modelIdPlaceholder": "google/gemini-2.5-flash-image-preview",
+    "modelIdDesc": "The exact model id your endpoint expects, as an image-capable chat completions model."
   },
   "assets": {
     "title": "All Files",
@@ -148,8 +156,7 @@
     "emptyFilter": "Nothing matches the filter.",
     "colTime": "Time",
     "colSource": "Source",
-    "colStatus": "Status",
-    "outOfCredits": "Out of credits — add credit in Settings"
+    "colStatus": "Status"
   },
   "status": {
     "queued": "Queued",

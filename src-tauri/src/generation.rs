@@ -317,13 +317,10 @@ async fn submit_group(
     }
 }
 
-/// A provider's resolved auth for one submission: its API key, plus (for
-/// meta-providers like recraftory) the downstream provider's key forwarded
-/// alongside it. Shared by every row in a group — auth is a per-provider
-/// concern, not a per-image one.
+/// A provider's resolved auth for one submission: its API key. Shared by
+/// every row in a group — auth is a per-provider concern, not a per-image one.
 struct ProviderAuth {
     api_key: String,
-    provider_api_key: Option<String>,
 }
 
 fn resolve_provider_auth(registry: &RegistryDb, provider_id: &str) -> Result<ProviderAuth, String> {
@@ -331,17 +328,7 @@ fn resolve_provider_auth(registry: &RegistryDb, provider_id: &str) -> Result<Pro
         .read_api_key(provider_id)
         .ok_or_else(|| format!("No API key set for {}", provider_id))?;
 
-    // Meta-providers (recraftory) need the downstream provider's API key too.
-    let provider_api_key = if provider_id == "recraftory" {
-        registry.read_api_key("google")
-    } else {
-        None
-    };
-
-    Ok(ProviderAuth {
-        api_key,
-        provider_api_key,
-    })
+    Ok(ProviderAuth { api_key })
 }
 
 /// Reads a saved source image and encodes it as a `data:` URI, by id.
@@ -392,7 +379,6 @@ async fn do_submit(
             prompt: record.prompt.clone(),
             image_data_uri: data_uri,
             api_key: auth.api_key,
-            provider_api_key: auth.provider_api_key,
             mode: ApiMode::Batch,
         })
         .await?;
@@ -438,7 +424,6 @@ fn spawn_interaction(
                 prompt: record.prompt.clone(),
                 image_data_uri: data_uri,
                 api_key: auth.api_key,
-                provider_api_key: auth.provider_api_key,
                 mode: ApiMode::Interactions,
             })
             .await;
@@ -511,7 +496,6 @@ async fn do_submit_group(
                 prompt: record.prompt.clone(),
                 image_data_uri: data_uri,
                 api_key: auth.api_key.clone(),
-                provider_api_key: auth.provider_api_key.clone(),
                 // Groups are always Batch-mode — `pack_into_batches` never
                 // lets an interactions-mode row join a multi-row group.
                 mode: ApiMode::Batch,
@@ -547,6 +531,7 @@ fn read_image_as_data_uri(path: &str) -> Result<String, String> {
 /// reached a terminal state. Downloads and saves the image on success. Records
 /// that are already terminal are returned unchanged.
 pub async fn refresh_generation(
+    app: &tauri::AppHandle,
     registry: &RegistryDb,
     db: &WorkspaceDb,
     id: &str,
@@ -598,12 +583,24 @@ pub async fn refresh_generation(
             save_generated_image(db, &mut record, &image_bytes, &ext)?;
         }
         PollOutcome::Failed { error, logs } => {
-            record.status = "failed".to_string();
-            record.error = Some(error);
             if logs.is_some() {
                 record.logs = logs;
             }
-            let _ = db.upsert_generation(&record);
+            if error == RATE_LIMITED_ERROR {
+                // Discovered mid-poll rather than at submission time (e.g. one
+                // item of a locally fanned-out batch hit a 429) — revert to
+                // `queued` and signal the frontend's AIMD backoff the same way
+                // `submit_one`/`submit_group`/`spawn_interaction` do at create
+                // time, instead of dying as a visible failure.
+                record.status = "queued".to_string();
+                record.poll_url = None;
+                let _ = db.upsert_generation(&record);
+                let _ = app.emit(RATE_LIMITED_EVENT, ());
+            } else {
+                record.status = "failed".to_string();
+                record.error = Some(error);
+                let _ = db.upsert_generation(&record);
+            }
         }
     }
 

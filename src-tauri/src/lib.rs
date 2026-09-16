@@ -60,9 +60,12 @@ pub fn run() {
             let registry =
                 RegistryDb::open(&registry_path).expect("Failed to initialize registry database");
 
-            // Initialize Recraftory provider config from the registry.
-            if let Some(endpoint) = registry.read_setting("recraftory_endpoint") {
-                providers::recraftory::set_recraftory_endpoint(endpoint);
+            // Initialize the OpenAI-compatible provider config from the registry.
+            if let (Some(base_url), Some(model)) = (
+                registry.read_setting("openai_compatible_base_url"),
+                registry.read_setting("openai_compatible_model"),
+            ) {
+                providers::openai_compatible::set_config(base_url, model);
             }
 
             let handle = workspace::boot_workspace(app, &registry)
@@ -107,9 +110,8 @@ pub fn run() {
             commands::delete_image,
             commands::delete_images,
             commands::save_uploaded_image,
-            commands::get_recraftory_endpoint,
-            commands::set_recraftory_endpoint,
-            commands::get_recraftory_credit_balance,
+            commands::get_openai_compatible_config,
+            commands::set_openai_compatible_config,
             commands::list_workspaces,
             commands::get_active_workspace,
             commands::open_workspace,

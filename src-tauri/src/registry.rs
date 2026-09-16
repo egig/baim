@@ -36,7 +36,7 @@ pub struct TemplateRow {
 }
 
 /// The app-wide registry (`baim.db`): global settings (API keys, active
-/// provider, Recraftory endpoint) plus the list of known workspaces. Exactly
+/// provider, per-provider config) plus the list of known workspaces. Exactly
 /// one instance, opened once at startup and never swapped — unlike
 /// `WorkspaceDb`, which is reopened on every workspace switch.
 pub struct RegistryDb {
@@ -85,24 +85,6 @@ impl RegistryDb {
             params![ACTIVE_PROVIDER_KEY],
         )
         .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
-
-        // The "cloud" provider was renamed to "recraftory".
-        conn.execute(
-            "UPDATE settings SET value = 'recraftory'
-             WHERE key = ?1 AND value = 'cloud'",
-            params![ACTIVE_PROVIDER_KEY],
-        )
-        .map_err(|e| format!("Failed to migrate active provider: {}", e))?;
-        conn.execute(
-            "UPDATE settings SET key = 'recraftory_api_key' WHERE key = 'cloud_api_key'",
-            [],
-        )
-        .map_err(|e| format!("Failed to migrate cloud api key setting: {}", e))?;
-        conn.execute(
-            "UPDATE settings SET key = 'recraftory_endpoint' WHERE key = 'cloud_endpoint'",
-            [],
-        )
-        .map_err(|e| format!("Failed to migrate cloud endpoint setting: {}", e))?;
 
         Ok(())
     }
