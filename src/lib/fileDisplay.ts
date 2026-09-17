@@ -28,3 +28,10 @@ export function kindOf(filename: string): string {
   const m = filename.match(/\.([^.]+)$/);
   return (m ? m[1] : "FILE").toUpperCase();
 }
+
+/** Kind-column label for the list view: "Folder" for directories, otherwise
+ *  the same extension badge as `kindOf`. Shared by the row renderer and the
+ *  Kind-column sort comparator so both agree on what "kind" means. */
+export function kindLabel(entry: { is_dir: boolean; name: string }): string {
+  return entry.is_dir ? "Folder" : kindOf(entry.name);
+}

@@ -25,7 +25,14 @@
   "browser": {
     "loading": "Loading…",
     "empty": "This folder is empty.",
-    "attachedCount": "{count} attached to chat"
+    "attachedCount": "{count} attached to chat",
+    "gridView": "Grid view",
+    "listView": "List view",
+    "colName": "Name",
+    "colModified": "Date Modified",
+    "colSize": "Size",
+    "colKind": "Kind",
+    "kindFolder": "Folder"
   },
   "chat": {
     "title": "Assistant",

@@ -25,7 +25,14 @@
   "browser": {
     "loading": "Memuat…",
     "empty": "Folder ini kosong.",
-    "attachedCount": "{count} dilampirkan ke chat"
+    "attachedCount": "{count} dilampirkan ke chat",
+    "gridView": "Tampilan grid",
+    "listView": "Tampilan daftar",
+    "colName": "Nama",
+    "colModified": "Tanggal Diubah",
+    "colSize": "Ukuran",
+    "colKind": "Jenis",
+    "kindFolder": "Folder"
   },
   "chat": {
     "title": "Asisten",

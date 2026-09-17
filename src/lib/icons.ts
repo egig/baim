@@ -11,6 +11,8 @@ export {
   IconAlertTriangle,
   IconLayoutGrid,
   IconList,
+  IconCaretUpFilled,
+  IconCaretDownFilled,
   IconChevronDown,
   IconChevronRight,
   IconChevronLeft,

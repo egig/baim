@@ -242,6 +242,11 @@ interface ShellValue {
    *  reads/clears them. */
   attachments: string[];
   toggleAttachment: (path: string) => void;
+  /** Replaces the whole attachment list with just this file — the plain-click
+   *  behavior in the browser, so picking a new file doesn't pile onto
+   *  whatever was attached before. Clicking the sole attached file again
+   *  clears it. */
+  selectAttachment: (path: string) => void;
   clearAttachments: () => void;
 }
 
@@ -251,6 +256,7 @@ const ShellContext = createContext<ShellValue>({
   navigateTo: () => {},
   attachments: [],
   toggleAttachment: () => {},
+  selectAttachment: () => {},
   clearAttachments: () => {},
 });
 
@@ -308,6 +314,9 @@ export default function Root() {
       prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
     );
   }, []);
+  const selectAttachment = useCallback((path: string) => {
+    setAttachments((prev) => (prev.length === 1 && prev[0] === path ? [] : [path]));
+  }, []);
   const clearAttachments = useCallback(() => setAttachments([]), []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -336,9 +345,10 @@ export default function Root() {
       navigateTo,
       attachments,
       toggleAttachment,
+      selectAttachment,
       clearAttachments,
     }),
-    [currentPath, navigateTo, attachments, toggleAttachment, clearAttachments]
+    [currentPath, navigateTo, attachments, toggleAttachment, selectAttachment, clearAttachments]
   );
 
   return (

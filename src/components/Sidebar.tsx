@@ -27,12 +27,6 @@ import {
  *  active for `/templates` and `/history` too. */
 const NAV: { to: string; labelKey: string; icon: ReactNode; end?: boolean }[] = [
   {
-    to: "/",
-    labelKey: "nav.files",
-    icon: <IconLayoutGrid size={16} stroke={1.6} />,
-    end: true,
-  },
-  {
     to: "/templates",
     labelKey: "nav.templates",
     icon: <IconStack2 size={16} stroke={1.6} />,
@@ -132,27 +126,6 @@ export function Sidebar({
         overflowY: "auto",
       }}
     >
-      <div
-        style={{
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          padding: "10px 8px 6px",
-          borderBottom: "1px solid var(--line-1)",
-          minHeight: 44,
-        }}
-      >
-        <span
-          style={{
-            padding: "0 8px",
-            fontSize: 13,
-            fontWeight: 700,
-            color: "var(--ink-800)",
-          }}
-        >
-          Baim
-        </span>
-      </div>
 
       <div style={{ padding: "4px 8px 0" }}>
         {NAV.map((item) => (
