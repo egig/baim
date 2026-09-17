@@ -233,19 +233,32 @@ export async function listFavorites(): Promise<FavoriteEntry[]> {
   return invoke<FavoriteEntry[]>("list_favorites");
 }
 
-/** A folder the user has browsed, most-recently-visited first. */
-export interface FolderRow {
+/** A mounted external/secondary volume (not the root/boot disk) — backs the
+ *  sidebar's "Locations" section. Re-enumerated live on every call. */
+export interface LocationEntry {
+  label: string;
   path: string;
-  last_visited_at: number;
 }
 
-export async function listRecentFolders(): Promise<FolderRow[]> {
-  return invoke<FolderRow[]>("list_recent_folders");
+export async function listLocations(): Promise<LocationEntry[]> {
+  return invoke<LocationEntry[]>("list_locations");
 }
 
-/** Remove a folder from the recents list. Does not touch any files. */
-export async function removeRecentFolder(path: string): Promise<void> {
-  return invoke<void>("remove_recent_folder", { path });
+/** Sentinel `currentPath` value for the sidebar's "Recent" virtual folder —
+ *  never passed to `listDir`, just detected by the browser route to switch
+ *  to `listRecentFiles` instead. */
+export const RECENT_VIRTUAL_PATH = "baim://recent";
+
+/** Files recently clicked/opened in the browser, most-recently-viewed first.
+ *  Backs the "Recent" virtual folder. */
+export async function listRecentFiles(): Promise<DirEntry[]> {
+  return invoke<DirEntry[]>("list_recent_files");
+}
+
+/** Record that a file was just clicked/opened/viewed, bumping it to the top
+ *  of the "Recent" virtual folder. */
+export async function recordFileVisit(path: string): Promise<void> {
+  return invoke<void>("record_file_visit", { path });
 }
 
 /** Open a file in its OS-default application. */

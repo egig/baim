@@ -13,8 +13,8 @@
   },
   "sidebar": {
     "favorites": "Favorit",
-    "recents": "Terbaru",
-    "removeRecent": "Hapus dari terbaru",
+    "recent": "Terbaru",
+    "locations": "Lokasi",
     "fav": {
       "Home": "Rumah",
       "Desktop": "Desktop",
@@ -25,6 +25,7 @@
   "browser": {
     "loading": "Memuat…",
     "empty": "Folder ini kosong.",
+    "emptyRecent": "Belum ada file yang baru dilihat.",
     "attachedCount": "{count} dilampirkan ke chat",
     "gridView": "Tampilan grid",
     "listView": "Tampilan daftar",

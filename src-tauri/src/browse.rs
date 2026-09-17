@@ -36,6 +36,92 @@ pub struct FavoriteEntry {
     pub path: String,
 }
 
+/// An externally-attached or secondary mounted volume, distinct from the
+/// root/boot disk — backs the sidebar's "Locations" section.
+#[derive(Serialize)]
+pub struct LocationEntry {
+    pub label: String,
+    pub path: String,
+}
+
+/// Real, on-disk filesystem types worth showing as a "Location" — deliberately
+/// an allowlist rather than a denylist of virtual ones (tmpfs, proc, sysfs,
+/// overlay, squashfs, devtmpfs, cgroup, …), since a fixed set of real
+/// filesystems is far shorter to enumerate correctly than every pseudo-fs a
+/// Linux distro might mount. Also excludes network filesystems (smbfs, nfs,
+/// afpfs) — "Locations" is local-volumes-only for now.
+fn is_real_disk_fs(fs_type: &str) -> bool {
+    matches!(
+        fs_type.to_ascii_lowercase().as_str(),
+        "apfs"
+            | "hfs"
+            | "hfsplus"
+            | "hfs+"
+            | "ntfs"
+            | "ntfs3"
+            | "refs"
+            | "exfat"
+            | "vfat"
+            | "fat"
+            | "fat32"
+            | "msdos"
+            | "ext2"
+            | "ext3"
+            | "ext4"
+            | "btrfs"
+            | "xfs"
+            | "f2fs"
+            | "zfs"
+    )
+}
+
+/// Whether `mount_point` is the root/boot volume, which "Locations" excludes
+/// (it's already reachable via the Home favorite). macOS/Linux mount the
+/// boot volume at `/`; Windows has no single root, so the boot drive is
+/// resolved from the `SystemDrive` environment variable (e.g. `C:`) instead.
+fn is_root_mount(mount_point: &Path) -> bool {
+    if cfg!(target_os = "windows") {
+        match std::env::var("SystemDrive") {
+            Ok(sysdrive) => mount_point
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .eq_ignore_ascii_case(sysdrive.trim_end_matches(['\\', '/'])),
+            Err(_) => false,
+        }
+    } else {
+        mount_point == Path::new("/")
+    }
+}
+
+/// Whether `mount_point` is a hidden member of the boot disk's own APFS
+/// volume group (Data/VM/Preboot/Update/Recovery), not a separate volume a
+/// user would recognize. macOS mounts these under `/System/Volumes/*`, while
+/// every real external/secondary volume mounts under `/Volumes/*` — Finder's
+/// Locations section never shows the former either.
+fn is_hidden_system_volume(mount_point: &Path) -> bool {
+    cfg!(target_os = "macos") && mount_point.starts_with("/System")
+}
+
+/// Every mounted volume except the root/boot disk, restricted to real disk
+/// filesystems — external/secondary drives, disk images, USB media. Backs
+/// the sidebar's "Locations" section. Re-enumerated fresh on every call
+/// (no caching) since this reflects live OS mount state.
+pub fn list_locations() -> Vec<LocationEntry> {
+    sysinfo::Disks::new_with_refreshed_list()
+        .list()
+        .iter()
+        .filter(|disk| !is_root_mount(disk.mount_point()))
+        .filter(|disk| !is_hidden_system_volume(disk.mount_point()))
+        .filter(|disk| is_real_disk_fs(&disk.file_system().to_string_lossy()))
+        .map(|disk| {
+            let path = disk.mount_point().to_string_lossy().to_string();
+            let name = disk.name().to_string_lossy().to_string();
+            let label = if name.trim().is_empty() { path.clone() } else { name };
+            LocationEntry { label, path }
+        })
+        .collect()
+}
+
 fn is_image_ext(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
@@ -43,7 +129,7 @@ fn is_image_ext(ext: &str) -> bool {
     )
 }
 
-fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -75,9 +161,8 @@ pub fn list_favorites() -> Vec<FavoriteEntry> {
 /// directory if that folder no longer exists or this is the first run.
 ///
 /// Also allowlists the folder for the Tauri asset protocol (so
-/// `convertFileSrc` thumbnails/previews work for files in it) and records the
-/// visit — the dynamic, per-navigation equivalent of what opening a
-/// "workspace" used to do once, up front.
+/// `convertFileSrc` thumbnails/previews work for files in it) and remembers
+/// it as the folder to reopen on next launch.
 pub fn list_dir(
     app: &tauri::AppHandle,
     registry: &RegistryDb,
@@ -151,7 +236,6 @@ pub fn list_dir(
         .parent()
         .map(|p| p.to_string_lossy().to_string());
 
-    let _ = registry.record_folder_visit(&path_str, now());
     let _ = registry.write_last_visited_path(&path_str);
 
     Ok(DirListing {
@@ -159,6 +243,43 @@ pub fn list_dir(
         parent,
         entries,
     })
+}
+
+/// Files recently clicked/opened in the browser, most-recently-viewed first —
+/// backs the sidebar's "Recent" virtual folder. Reads candidate paths from
+/// the DB, then stats each one and silently drops any that no longer exist
+/// (moved/deleted since being viewed) rather than erroring the whole list.
+pub fn list_recent_files(registry: &RegistryDb) -> Result<Vec<DirEntry>, String> {
+    let paths = registry.list_recent_file_paths(60)?;
+    let mut entries = Vec::new();
+    for path in paths {
+        let p = Path::new(&path);
+        let metadata = match p.metadata() {
+            Ok(m) if m.is_file() => m,
+            _ => continue,
+        };
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let is_image = is_image_ext(ext);
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        entries.push(DirEntry {
+            path,
+            name,
+            is_dir: false,
+            is_image,
+            size_bytes: metadata.len(),
+            modified_at,
+        });
+    }
+    Ok(entries)
 }
 
 /// Open a file in its OS-default application, or reveal it in the system

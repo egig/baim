@@ -1,8 +1,14 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { dirListingQuery } from "../../lib/queries";
-import { deleteImage, openPathExternally, type DirEntry } from "../../lib/tauri";
+import { dirListingQuery, recentFilesQuery } from "../../lib/queries";
+import {
+  deleteImage,
+  openPathExternally,
+  recordFileVisit,
+  RECENT_VIRTUAL_PATH,
+  type DirEntry,
+} from "../../lib/tauri";
 import { kindLabel } from "../../lib/fileDisplay";
 import { useShell } from "../../root";
 import { useT } from "../../lib/i18n";
@@ -13,6 +19,7 @@ import {
   IconCaretDownFilled,
   IconCaretUpFilled,
   IconChevronRight,
+  IconClock,
   IconFolder,
   IconLayoutGrid,
   IconList,
@@ -142,12 +149,28 @@ export default function Browser() {
   const hideKind = contentWidth < HIDE_KIND_BELOW;
   const hideModified = contentWidth < HIDE_MODIFIED_BELOW;
 
-  const { data: listing, isLoading, error } = useQuery({
-    ...dirListingQuery(currentPath ?? undefined),
-    enabled: currentPath !== null,
-  });
+  const isRecentView = currentPath === RECENT_VIRTUAL_PATH;
 
-  const crumbs = useMemo(() => (listing ? breadcrumbsOf(listing.path) : []), [listing]);
+  const dirQuery = useQuery({
+    ...dirListingQuery(currentPath ?? undefined),
+    enabled: currentPath !== null && !isRecentView,
+  });
+  const recentQuery = useQuery({ ...recentFilesQuery(), enabled: isRecentView });
+
+  const listing = useMemo(() => {
+    if (!isRecentView) return dirQuery.data;
+    return recentQuery.data
+      ? { path: RECENT_VIRTUAL_PATH, parent: null, entries: recentQuery.data }
+      : undefined;
+  }, [isRecentView, dirQuery.data, recentQuery.data]);
+  const isLoading = isRecentView ? recentQuery.isLoading : dirQuery.isLoading;
+  const error = isRecentView ? recentQuery.error : dirQuery.error;
+
+  const crumbs = useMemo(() => {
+    if (!listing) return [];
+    if (isRecentView) return [{ label: t("sidebar.recent"), path: RECENT_VIRTUAL_PATH }];
+    return breadcrumbsOf(listing.path);
+  }, [listing, isRecentView, t]);
 
   const sortedEntries = useMemo(() => {
     const entries = listing?.entries ?? [];
@@ -157,7 +180,21 @@ export default function Browser() {
   }, [listing, sort]);
 
   function refresh() {
-    if (listing) void qc.invalidateQueries({ queryKey: dirListingQuery(listing.path).queryKey });
+    if (!listing) return;
+    if (isRecentView) {
+      void qc.invalidateQueries({ queryKey: recentFilesQuery().queryKey });
+    } else {
+      void qc.invalidateQueries({ queryKey: dirListingQuery(listing.path).queryKey });
+    }
+  }
+
+  // Bumps a file to the top of the "Recent" virtual folder; fired on both a
+  // plain click (select/attach) and a double click (open), so either way of
+  // interacting with a file counts as "viewing" it.
+  function visit(entry: DirEntry) {
+    void recordFileVisit(entry.path).then(() => {
+      void qc.invalidateQueries({ queryKey: recentFilesQuery().queryKey });
+    });
   }
 
   function onEntryClick(entry: DirEntry, e: React.MouseEvent) {
@@ -167,6 +204,7 @@ export default function Browser() {
     // now (see ChatPane). Cmd-click toggles it into/out of the existing
     // selection instead, for attaching more than one file.
     e.preventDefault();
+    visit(entry);
     if (e.metaKey) {
       toggleAttachment(entry.path);
     } else {
@@ -178,6 +216,7 @@ export default function Browser() {
     if (entry.is_dir) {
       navigateTo(entry.path);
     } else {
+      visit(entry);
       void openPathExternally(entry.path);
     }
   }
@@ -265,8 +304,8 @@ export default function Browser() {
         )}
         {listing && listing.entries.length === 0 && (
           <div style={{ margin: "auto", textAlign: "center", color: "var(--ink-400)", fontSize: 12.5 }}>
-            <IconFolder size={28} color="var(--ink-350)" />
-            <div style={{ marginTop: 8 }}>{t("browser.empty")}</div>
+            {isRecentView ? <IconClock size={28} color="var(--ink-350)" /> : <IconFolder size={28} color="var(--ink-350)" />}
+            <div style={{ marginTop: 8 }}>{t(isRecentView ? "browser.emptyRecent" : "browser.empty")}</div>
           </div>
         )}
         {listing && listing.entries.length > 0 && viewMode === "grid" && (

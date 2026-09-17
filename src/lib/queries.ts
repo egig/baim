@@ -7,6 +7,7 @@ import {
   listTemplates,
   listChatMessages,
   listDir,
+  listRecentFiles,
   getMaxConcurrency,
   type ImageEntry,
   type Generation,
@@ -213,6 +214,16 @@ export function dirListingQuery(path: string | undefined) {
   return queryOptions({
     queryKey: ["dirListing", path ?? null] as const,
     queryFn: () => listDir(path),
+    staleTime: 5_000,
+  });
+}
+
+/** Backs the sidebar's "Recent" virtual folder — files recently
+ *  clicked/opened in the browser, most-recently-viewed first. */
+export function recentFilesQuery() {
+  return queryOptions({
+    queryKey: ["recentFiles"] as const,
+    queryFn: listRecentFiles,
     staleTime: 5_000,
   });
 }

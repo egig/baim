@@ -13,8 +13,8 @@
   },
   "sidebar": {
     "favorites": "Favorites",
-    "recents": "Recents",
-    "removeRecent": "Remove from recents",
+    "recent": "Recent",
+    "locations": "Locations",
     "fav": {
       "Home": "Home",
       "Desktop": "Desktop",
@@ -25,6 +25,7 @@
   "browser": {
     "loading": "Loading…",
     "empty": "This folder is empty.",
+    "emptyRecent": "No recently viewed files yet.",
     "attachedCount": "{count} attached to chat",
     "gridView": "Grid view",
     "listView": "List view",

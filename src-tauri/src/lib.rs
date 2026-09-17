@@ -15,7 +15,7 @@ use tauri::Manager;
 
 /// Top-level Tauri managed state. `registry` is the single always-open
 /// connection to `baim.db` — settings, API keys, the image/generation
-/// catalog, the chat thread, and recent folders all live behind it. `Arc`
+/// catalog, the chat thread, and recently-viewed files all live behind it. `Arc`
 /// so it can be cheaply cloned into detached async tasks (see
 /// `generation::spawn_interaction`) that must outlive the command call that
 /// started them.
@@ -130,8 +130,9 @@ pub fn run() {
             commands::set_openai_compatible_config,
             commands::list_dir,
             commands::list_favorites,
-            commands::list_recent_folders,
-            commands::remove_recent_folder,
+            commands::list_locations,
+            commands::list_recent_files,
+            commands::record_file_visit,
             commands::open_path_externally,
             commands::reveal_in_file_manager,
             commands::send_chat_message,

@@ -24,6 +24,8 @@ export {
   IconCheck,
   IconArrowsSort,
   IconHistory,
+  IconClock,
+  IconDeviceSdCard,
   IconDownload,
   IconHome,
   IconDeviceDesktop,

@@ -20,15 +20,6 @@ fn api_key_setting_key(provider_id: &str) -> String {
     format!("{}_api_key", provider_id)
 }
 
-/// A folder the user has browsed, most-recently-visited first — backs the
-/// sidebar's "Recents" list. (Table name `workspaces` is a holdover from when
-/// this recorded chosen workspace folders; same shape, new meaning.)
-#[derive(Serialize)]
-pub struct FolderRow {
-    pub path: String,
-    pub last_visited_at: i64,
-}
-
 /// A user-saved prompt template: a name + reusable prompt text, with a
 /// preview image copied into app-wide storage (see `templates.rs`) so it
 /// survives its source folder being moved/renamed/deleted.
@@ -61,7 +52,7 @@ pub struct ChatMessageRow {
 
 /// The app-wide database (`baim.db`): global settings (API keys, active
 /// provider), the image/generation catalog (keyed by absolute path — see
-/// `generation.rs`), the persistent chat thread, recently-visited folders,
+/// `generation.rs`), the persistent chat thread, recently-viewed files,
 /// and user-saved templates. Exactly one instance, opened once at startup and
 /// held for the app's whole lifetime.
 pub struct RegistryDb {
@@ -85,9 +76,9 @@ impl RegistryDb {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS workspaces (
+            CREATE TABLE IF NOT EXISTS recent_files (
                 path TEXT PRIMARY KEY,
-                last_opened_at INTEGER NOT NULL
+                viewed_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS templates (
                 id TEXT PRIMARY KEY,
@@ -269,44 +260,33 @@ impl RegistryDb {
         self.write_setting(LAST_VISITED_PATH_KEY, path)
     }
 
-    // ---- recently-visited folders ----
+    // ---- recently-viewed files ----
 
-    /// Recently-visited folders, most-recent first.
-    pub fn list_recent_folders(&self) -> Result<Vec<FolderRow>, String> {
+    /// Paths of recently clicked/viewed files, most-recent first. Backs the
+    /// sidebar's "Recent" virtual folder; the caller (`browse::list_recent_files`)
+    /// stats each one and drops any that no longer exist on disk.
+    pub fn list_recent_file_paths(&self, limit: i64) -> Result<Vec<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT path, last_opened_at FROM workspaces ORDER BY last_opened_at DESC LIMIT 20")
+            .prepare("SELECT path FROM recent_files ORDER BY viewed_at DESC LIMIT ?1")
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
         let rows = stmt
-            .query_map([], |row| {
-                Ok(FolderRow {
-                    path: row.get(0)?,
-                    last_visited_at: row.get(1)?,
-                })
-            })
-            .map_err(|e| format!("Failed to query recent folders: {}", e))?
+            .query_map(params![limit], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Failed to query recent files: {}", e))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(rows)
     }
 
-    /// Record that a folder (by canonical path) was just visited.
-    pub fn record_folder_visit(&self, path: &str, visited_at: i64) -> Result<(), String> {
+    /// Record that a file was just clicked/opened/viewed.
+    pub fn record_file_visit(&self, path: &str, viewed_at: i64) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO workspaces (path, last_opened_at) VALUES (?1, ?2)
-             ON CONFLICT(path) DO UPDATE SET last_opened_at = excluded.last_opened_at",
-            params![path, visited_at],
+            "INSERT INTO recent_files (path, viewed_at) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET viewed_at = excluded.viewed_at",
+            params![path, viewed_at],
         )
-        .map_err(|e| format!("Failed to record folder visit: {}", e))?;
-        Ok(())
-    }
-
-    /// Remove a folder from the recents list. Touches no files.
-    pub fn remove_recent_folder(&self, path: &str) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM workspaces WHERE path = ?1", params![path])
-            .map_err(|e| format!("Failed to remove recent folder: {}", e))?;
+        .map_err(|e| format!("Failed to record file visit: {}", e))?;
         Ok(())
     }
 

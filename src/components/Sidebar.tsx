@@ -1,26 +1,26 @@
 import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   listFavorites,
-  listRecentFolders,
-  removeRecentFolder,
+  listLocations,
+  RECENT_VIRTUAL_PATH,
   type FavoriteEntry,
-  type FolderRow,
+  type LocationEntry,
 } from "../lib/tauri";
 import { useT } from "../lib/i18n";
 import { useShell } from "../root";
 import {
-  IconLayoutGrid,
   IconStack2,
   IconHistory,
+  IconClock,
+  IconDeviceSdCard,
   IconSettings,
   IconHome,
   IconDeviceDesktop,
   IconPhoto,
   IconDownload,
   IconFolder,
-  IconX,
 } from "../lib/icons";
 
 /** Top-level routes, one entry per page. `end` on "/" so it isn't marked
@@ -74,10 +74,14 @@ const sectionLabelStyle: React.CSSProperties = {
 };
 
 /** Left navigation rail: a Finder-style sidebar. Favorites is a fixed
- *  starter set (Home/Desktop/Pictures/Downloads); Recents is auto-tracked.
- *  Both just move the shared `currentPath` (see root.tsx) and route to "/"
- *  — they aren't routes of their own. Below that, the three fixed pages.
- *  `activeCount` (queued + in-flight generations) drives the History badge;
+ *  starter set (Home/Desktop/Pictures/Downloads); "Recent" is a virtual
+ *  folder of files recently clicked/viewed in the browser (see
+ *  `RECENT_VIRTUAL_PATH`, detected by the browser route); "Locations" lists
+ *  mounted external/secondary volumes (not the root/boot disk), live from
+ *  the OS and hidden entirely when there are none. All of these just move
+ *  the shared `currentPath` (see root.tsx) and route to "/" — they aren't
+ *  routes of their own. Below that, the two fixed pages. `activeCount`
+ *  (queued + in-flight generations) drives the History badge;
  *  `onOpenSettings` opens the settings dialog owned by the shell. */
 export function Sidebar({
   activeCount,
@@ -88,7 +92,6 @@ export function Sidebar({
 }) {
   const { t } = useT();
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const { currentPath, navigateTo } = useShell();
 
   const { data: favorites = [] } = useQuery({
@@ -96,22 +99,17 @@ export function Sidebar({
     queryFn: listFavorites,
     staleTime: Infinity,
   });
-  const recentsQueryKey = ["recentFolders"] as const;
-  const { data: recents = [] } = useQuery({
-    queryKey: recentsQueryKey,
-    queryFn: listRecentFolders,
-    staleTime: 5_000,
+  // No explicit staleTime: default (0) means this refetches on window focus
+  // and on mount, which is as live as "Locations" needs to be — a plugged-in
+  // drive shows up next time you look, without a background watcher.
+  const { data: locations = [] } = useQuery({
+    queryKey: ["locations"] as const,
+    queryFn: listLocations,
   });
 
   function goTo(path: string) {
     navigateTo(path);
     navigate("/");
-  }
-
-  async function onRemoveRecent(e: React.MouseEvent, path: string) {
-    e.stopPropagation();
-    await removeRecentFolder(path);
-    void qc.invalidateQueries({ queryKey: recentsQueryKey });
   }
 
   return (
@@ -165,6 +163,22 @@ export function Sidebar({
         ))}
       </div>
 
+      <div style={{ padding: "0 8px" }}>
+        <button
+          type="button"
+          className="nav-row"
+          onClick={() => goTo(RECENT_VIRTUAL_PATH)}
+          style={
+            currentPath === RECENT_VIRTUAL_PATH
+              ? { ...rowStyle, color: "var(--indigo-600)", background: "var(--indigo-100)" }
+              : rowStyle
+          }
+        >
+          <IconClock size={14} stroke={1.6} />
+          <span style={{ flex: 1 }}>{t("sidebar.recent")}</span>
+        </button>
+      </div>
+
       {favorites.length > 0 && (
         <div>
           <div style={sectionLabelStyle}>{t("sidebar.favorites")}</div>
@@ -200,68 +214,37 @@ export function Sidebar({
         </div>
       )}
 
-      {recents.length > 0 && (
+      {locations.length > 0 && (
         <div>
-          <div style={sectionLabelStyle}>{t("sidebar.recents")}</div>
+          <div style={sectionLabelStyle}>{t("sidebar.locations")}</div>
           <div style={{ padding: "0 8px", display: "flex", flexDirection: "column", gap: 1 }}>
-            {recents.map((row: FolderRow) => {
-              const name = row.path.split(/[\\/]/).filter(Boolean).pop() ?? row.path;
-              return (
-                <div
-                  key={row.path}
-                  onClick={() => goTo(row.path)}
-                  title={row.path}
-                  className="nav-row"
+            {locations.map((loc: LocationEntry) => (
+              <button
+                key={loc.path}
+                type="button"
+                className="nav-row"
+                onClick={() => goTo(loc.path)}
+                title={loc.path}
+                style={
+                  currentPath === loc.path
+                    ? { ...rowStyle, color: "var(--indigo-600)", background: "var(--indigo-100)" }
+                    : rowStyle
+                }
+              >
+                <IconDeviceSdCard size={14} stroke={1.6} />
+                <span
                   style={{
-                    ...(currentPath === row.path
-                      ? { color: "var(--indigo-600)", background: "var(--indigo-100)" }
-                      : {}),
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "0 4px 0 10px",
-                    height: 30,
-                    borderRadius: "var(--r-control)",
-                    cursor: "pointer",
+                    flex: 1,
+                    minWidth: 0,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
-                  <IconFolder size={14} stroke={1.6} style={{ flexShrink: 0 }} />
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {name}
-                  </span>
-                  <button
-                    type="button"
-                    title={t("sidebar.removeRecent")}
-                    onClick={(e) => onRemoveRecent(e, row.path)}
-                    style={{
-                      flexShrink: 0,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 20,
-                      height: 20,
-                      border: "none",
-                      borderRadius: "var(--r-control)",
-                      background: "transparent",
-                      color: "var(--ink-400)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <IconX size={11} />
-                  </button>
-                </div>
-              );
-            })}
+                  {loc.label}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       )}

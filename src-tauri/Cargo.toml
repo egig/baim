@@ -33,3 +33,4 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 tokio = { version = "1", features = ["time", "sync"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+sysinfo = "0.32"

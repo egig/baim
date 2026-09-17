@@ -3,7 +3,7 @@ use crate::chat;
 use crate::generation;
 use crate::generation::{Generation, ImageEntry, SubmitOutcome};
 use crate::provider::{self, ProviderInfo};
-use crate::registry::{ChatMessageRow, FolderRow, TemplateRow};
+use crate::registry::{ChatMessageRow, TemplateRow};
 use crate::templates;
 use crate::AppState;
 
@@ -238,16 +238,25 @@ pub fn list_favorites() -> Vec<FavoriteEntry> {
     browse::list_favorites()
 }
 
-/// Recently-visited folders, most-recent first.
+/// Mounted external/secondary volumes (not the root/boot disk) — backs the
+/// sidebar's "Locations" section.
 #[tauri::command]
-pub fn list_recent_folders(state: tauri::State<'_, AppState>) -> Result<Vec<FolderRow>, String> {
-    state.registry.list_recent_folders()
+pub fn list_locations() -> Vec<browse::LocationEntry> {
+    browse::list_locations()
 }
 
-/// Remove a folder from the recents list. Does not touch any files.
+/// Files recently clicked/opened in the browser, most-recently-viewed first —
+/// backs the sidebar's "Recent" virtual folder.
 #[tauri::command]
-pub fn remove_recent_folder(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
-    state.registry.remove_recent_folder(&path)
+pub fn list_recent_files(state: tauri::State<'_, AppState>) -> Result<Vec<browse::DirEntry>, String> {
+    browse::list_recent_files(&state.registry)
+}
+
+/// Record that a file was just clicked/opened/viewed, bumping it to the top
+/// of the "Recent" virtual folder.
+#[tauri::command]
+pub fn record_file_visit(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    state.registry.record_file_visit(&path, browse::now())
 }
 
 /// Open a file in its OS-default application.
