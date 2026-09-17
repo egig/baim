@@ -4,13 +4,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-use crate::db::WorkspaceDb;
 use crate::provider::{
     get_provider, ApiMode, CreateOutcome, GenerateRequest, PollOutcome, DEFAULT_PROVIDER,
     RATE_LIMITED_ERROR,
 };
 use crate::registry::RegistryDb;
-use crate::workspace::WorkspaceHandle;
 
 /// Tauri event emitted when a detached Interactions-mode task (see
 /// `spawn_interaction`) hits a rate limit. Its own `submit_queued` tick has
@@ -35,7 +33,7 @@ fn normalize_api_mode(mode: &str) -> &'static str {
 /// submit time). The queue drainer (`submit_queued`) later submits it to the
 /// provider. Returns the persisted record.
 pub fn create_prediction(
-    db: &WorkspaceDb,
+    db: &RegistryDb,
     prompt: &str,
     provider_id: &str,
     source_id: Option<&str>,
@@ -61,7 +59,7 @@ pub fn create_prediction(
 /// Each becomes its own `queued` row, drained later by `submit_queued`. Returns
 /// every record in prompt order.
 pub fn create_predictions(
-    db: &WorkspaceDb,
+    db: &RegistryDb,
     prompts: &[String],
     provider_id: &str,
     source_id: Option<&str>,
@@ -80,7 +78,7 @@ pub fn create_predictions(
 /// Re-enqueue an existing generation (typically a `failed` one) as a fresh
 /// `queued` row cloning its source, prompt, provider and mode. Powers per-row
 /// Retry.
-pub fn requeue_generation(db: &WorkspaceDb, id: &str) -> Result<Generation, String> {
+pub fn requeue_generation(db: &RegistryDb, id: &str) -> Result<Generation, String> {
     let existing = db.load_generation(id).ok_or("Generation not found")?;
     create_prediction(
         db,
@@ -93,7 +91,7 @@ pub fn requeue_generation(db: &WorkspaceDb, id: &str) -> Result<Generation, Stri
 
 /// Drop every `queued` generation (the "Clear queue" action). Already-submitted
 /// (`pending`) jobs are left to finish.
-pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
+pub fn clear_queue(db: &RegistryDb) -> Result<(), String> {
     db.clear_queued()
 }
 
@@ -106,7 +104,7 @@ pub fn clear_queue(db: &WorkspaceDb) -> Result<(), String> {
 /// `limit = k - in_flight` (`k` is the frontend's adaptive concurrency
 /// target), so in-flight *requests* never exceed it regardless of how many
 /// rows they cover. Groups are submitted concurrently via `join_all` rather
-/// than back to back — `db`/`registry` are only touched synchronously between
+/// than back to back — `registry` is only touched synchronously between
 /// `.await` points, never held across one, so interleaving them here is safe.
 /// Failures (bad key, missing source, provider error) mark every row in that
 /// group `failed` without aborting the rest; a rate-limited submission
@@ -124,8 +122,7 @@ pub struct SubmitOutcome {
 
 pub async fn submit_queued(
     app: &tauri::AppHandle,
-    registry: &RegistryDb,
-    ws: Arc<WorkspaceHandle>,
+    registry: Arc<RegistryDb>,
     limit: usize,
 ) -> Result<SubmitOutcome, String> {
     if limit == 0 {
@@ -134,20 +131,20 @@ pub async fn submit_queued(
             rate_limited: false,
         });
     }
-    let batches = pack_into_batches(&ws.db, ws.db.list_queued_all()?)
+    let batches = pack_into_batches(&registry, registry.list_queued_all()?)
         .into_iter()
         .take(limit);
 
     let results = futures_util::future::join_all(batches.map(|group| {
-        let ws = ws.clone();
+        let registry = registry.clone();
         let app = app.clone();
         async move {
             if group.len() == 1 {
                 let mut record = group.into_iter().next().unwrap();
-                let rate_limited = submit_one(&app, registry, &ws, &mut record).await;
+                let rate_limited = submit_one(&app, &registry, &mut record).await;
                 (vec![record], rate_limited)
             } else {
-                submit_group(registry, &ws.db, group).await
+                submit_group(&registry, group).await
             }
         }
     }))
@@ -171,7 +168,7 @@ const BATCH_PAYLOAD_BUDGET_BYTES: u64 = 18 * 1024 * 1024;
 /// rows can share one batch call, so it doesn't need to be exact. A row whose
 /// image can't be found estimates as 0 rather than blocking packing; it'll
 /// surface a clear error at actual submission time instead.
-fn estimate_payload_bytes(db: &WorkspaceDb, record: &Generation) -> u64 {
+fn estimate_payload_bytes(db: &RegistryDb, record: &Generation) -> u64 {
     record
         .source_id
         .as_deref()
@@ -197,7 +194,7 @@ fn estimate_payload_bytes(db: &WorkspaceDb, record: &Generation) -> u64 {
 /// never see one. This is what routes every interactions-mode row through
 /// `submit_one`/`do_submit` (and from there into `spawn_interaction`)
 /// instead of `submit_group`.
-fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Generation>> {
+fn pack_into_batches(db: &RegistryDb, records: Vec<Generation>) -> Vec<Vec<Generation>> {
     struct Batch {
         provider: String,
         records: Vec<Generation>,
@@ -244,48 +241,41 @@ fn pack_into_batches(db: &WorkspaceDb, records: Vec<Generation>) -> Vec<Vec<Gene
 /// the row and spawning its detached task — the real outcome (including any
 /// rate limit) arrives later out of band via `RATE_LIMITED_EVENT`, so this
 /// always returns `false` for that mode; see `spawn_interaction`.
-async fn submit_one(
-    app: &tauri::AppHandle,
-    registry: &RegistryDb,
-    ws: &Arc<WorkspaceHandle>,
-    record: &mut Generation,
-) -> bool {
-    if let Err(err) = do_submit(app, registry, ws, record).await {
+async fn submit_one(app: &tauri::AppHandle, registry: &Arc<RegistryDb>, record: &mut Generation) -> bool {
+    if let Err(err) = do_submit(app, registry, record).await {
         if err == RATE_LIMITED_ERROR {
             record.status = "queued".to_string();
             record.poll_url = None;
-            let _ = ws.db.upsert_generation(record);
+            let _ = registry.upsert_generation(record);
             return true;
         }
         record.status = "failed".to_string();
         record.error = Some(err);
         record.poll_url = None;
-        let _ = ws.db.upsert_generation(record);
+        let _ = registry.upsert_generation(record);
     }
     false
 }
 
-/// Submit a group of ≥2 queued rows sharing one provider + source image as a
-/// single batch request (`ImageProvider::create_batch`), reading the source
-/// image once rather than once per row. On success every row gets the same
-/// `poll_url`. On a rate limit every row reverts to `queued`, same contract
-/// as `submit_one`'s single-row case (one `rate_limited` signal for the whole
-/// group). Any other error marks every row `failed` with that message, since
-/// the batch genuinely never got submitted — there's no partial outcome to
-/// preserve at this stage (that only happens once results come back via
-/// `poll`).
+/// Submit a group of ≥2 queued rows sharing one provider as a single batch
+/// request (`ImageProvider::create_batch`). On success every row gets the
+/// same `poll_url`. On a rate limit every row reverts to `queued`, same
+/// contract as `submit_one`'s single-row case (one `rate_limited` signal for
+/// the whole group). Any other error marks every row `failed` with that
+/// message, since the batch genuinely never got submitted — there's no
+/// partial outcome to preserve at this stage (that only happens once results
+/// come back via `poll`).
 async fn submit_group(
     registry: &RegistryDb,
-    db: &WorkspaceDb,
     mut records: Vec<Generation>,
 ) -> (Vec<Generation>, bool) {
-    match do_submit_group(registry, db, &records).await {
+    match do_submit_group(registry, &records).await {
         Ok(CreateOutcome::Pending { poll_url }) => {
             for record in &mut records {
                 record.status = "pending".to_string();
                 record.poll_url = Some(poll_url.clone());
                 record.error = None;
-                let _ = db.upsert_generation(record);
+                let _ = registry.upsert_generation(record);
             }
             (records, false)
         }
@@ -293,7 +283,7 @@ async fn submit_group(
             // No batching-capable provider is synchronous today, but handle
             // it: every row in the group shares the same result.
             for record in &mut records {
-                let _ = save_generated_image(db, record, &image_bytes, &ext);
+                let _ = save_generated_image(registry, record, &image_bytes, &ext);
             }
             (records, false)
         }
@@ -301,7 +291,7 @@ async fn submit_group(
             for record in &mut records {
                 record.status = "queued".to_string();
                 record.poll_url = None;
-                let _ = db.upsert_generation(record);
+                let _ = registry.upsert_generation(record);
             }
             (records, true)
         }
@@ -310,7 +300,7 @@ async fn submit_group(
                 record.status = "failed".to_string();
                 record.error = Some(err.clone());
                 record.poll_url = None;
-                let _ = db.upsert_generation(record);
+                let _ = registry.upsert_generation(record);
             }
             (records, false)
         }
@@ -332,7 +322,7 @@ fn resolve_provider_auth(registry: &RegistryDb, provider_id: &str) -> Result<Pro
 }
 
 /// Reads a saved source image and encodes it as a `data:` URI, by id.
-fn resolve_image_data_uri(db: &WorkspaceDb, source_id: &str) -> Result<String, String> {
+fn resolve_image_data_uri(db: &RegistryDb, source_id: &str) -> Result<String, String> {
     let image = db
         .find_image_by_id(source_id)
         .ok_or("Source image no longer exists")?;
@@ -341,8 +331,7 @@ fn resolve_image_data_uri(db: &WorkspaceDb, source_id: &str) -> Result<String, S
 
 async fn do_submit(
     app: &tauri::AppHandle,
-    registry: &RegistryDb,
-    ws: &Arc<WorkspaceHandle>,
+    registry: &Arc<RegistryDb>,
     record: &mut Generation,
 ) -> Result<(), String> {
     let provider = get_provider(&record.provider)
@@ -352,20 +341,21 @@ async fn do_submit(
         .source_id
         .as_deref()
         .ok_or("Queued generation has no source image")?;
-    let data_uri = resolve_image_data_uri(&ws.db, source_id)?;
+    let data_uri = resolve_image_data_uri(registry, source_id)?;
 
     if record.api_mode == "interactions" {
         // Checkpoint *before* spawning: `pending` + no poll_url is what
-        // `reconcile_orphaned_interactions` recognizes on the next workspace
-        // open as "was in flight when the app closed" (Batch-mode `pending`
-        // rows always carry a poll_url, so this pairing is unambiguous).
+        // `reconcile_orphaned_interactions` recognizes on the next app
+        // startup as "was in flight when the app closed" (Batch-mode
+        // `pending` rows always carry a poll_url, so this pairing is
+        // unambiguous).
         record.status = "pending".to_string();
         record.poll_url = None;
         record.error = None;
-        ws.db.upsert_generation(record)?;
+        registry.upsert_generation(record)?;
         spawn_interaction(
             app.clone(),
-            ws.clone(),
+            registry.clone(),
             provider,
             record.clone(),
             data_uri,
@@ -388,12 +378,12 @@ async fn do_submit(
             record.status = "pending".to_string();
             record.poll_url = Some(poll_url);
             record.error = None;
-            ws.db.upsert_generation(record)?;
+            registry.upsert_generation(record)?;
             Ok(())
         }
         CreateOutcome::Done { image_bytes, ext } => {
             // Synchronous provider: save immediately (sets status `succeeded`).
-            save_generated_image(&ws.db, record, &image_bytes, &ext)
+            save_generated_image(registry, record, &image_bytes, &ext)
         }
     }
 }
@@ -408,11 +398,11 @@ async fn do_submit(
 ///
 /// If the whole app closes/crashes while this is in flight, the row stays
 /// checkpointed `pending`/no-poll_url and is silently reset to `queued` by
-/// `reconcile_orphaned_interactions` on the next workspace open — an
-/// accepted, self-healing cost (one wasted call), not a correctness issue.
+/// `reconcile_orphaned_interactions` on the next app startup — an accepted,
+/// self-healing cost (one wasted call), not a correctness issue.
 fn spawn_interaction(
     app: tauri::AppHandle,
-    ws: Arc<WorkspaceHandle>,
+    registry: Arc<RegistryDb>,
     provider: Box<dyn crate::provider::ImageProvider>,
     mut record: Generation,
     data_uri: String,
@@ -430,7 +420,7 @@ fn spawn_interaction(
 
         match result {
             Ok(CreateOutcome::Done { image_bytes, ext }) => {
-                let _ = save_generated_image(&ws.db, &mut record, &image_bytes, &ext);
+                let _ = save_generated_image(&registry, &mut record, &image_bytes, &ext);
             }
             Ok(CreateOutcome::Pending { poll_url }) => {
                 // Defensive only — v1's synchronous Interactions call should
@@ -438,12 +428,12 @@ fn spawn_interaction(
                 // modes are out of scope). Handle it rather than dropping it.
                 record.status = "pending".to_string();
                 record.poll_url = Some(poll_url);
-                let _ = ws.db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
             }
             Err(err) if err == RATE_LIMITED_ERROR => {
                 record.status = "queued".to_string();
                 record.poll_url = None;
-                let _ = ws.db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
                 // Can't ride along in submit_queued's already-returned
                 // SubmitOutcome (that call returned long ago) — signal the
                 // frontend's AIMD backoff out of band instead.
@@ -453,7 +443,7 @@ fn spawn_interaction(
                 record.status = "failed".to_string();
                 record.error = Some(err);
                 record.poll_url = None;
-                let _ = ws.db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
             }
         }
     });
@@ -461,13 +451,12 @@ fn spawn_interaction(
 
 /// Batch-submit variant of `do_submit`: resolves auth once for the whole
 /// group, then builds one `(id, GenerateRequest)` item per row. A group can
-/// now span multiple source images (see `pack_into_batches`), so each row's
+/// span multiple source images (see `pack_into_batches`), so each row's
 /// image is resolved individually — cached by `source_id` so rows that do
 /// share an image (the common "N templates × one image" case) still only pay
 /// for one read.
 async fn do_submit_group(
     registry: &RegistryDb,
-    db: &WorkspaceDb,
     records: &[Generation],
 ) -> Result<CreateOutcome, String> {
     let first = records.first().ok_or("Empty submission group")?;
@@ -485,7 +474,7 @@ async fn do_submit_group(
         let data_uri = match image_cache.get(source_id) {
             Some(cached) => cached.clone(),
             None => {
-                let uri = resolve_image_data_uri(db, source_id)?;
+                let uri = resolve_image_data_uri(registry, source_id)?;
                 image_cache.insert(source_id.to_string(), uri.clone());
                 uri
             }
@@ -508,8 +497,9 @@ async fn do_submit_group(
 
 /// Read a saved image file and encode it as a `data:` URI for the provider,
 /// picking the mime type from the file extension. Used at submit time to resolve
-/// a queued row's `source_id` back into the bytes the provider needs.
-fn read_image_as_data_uri(path: &str) -> Result<String, String> {
+/// a queued row's `source_id` back into the bytes the provider needs, and by
+/// `chat.rs` to inline a chat attachment for the assistant to see.
+pub fn read_image_as_data_uri(path: &str) -> Result<String, String> {
     use base64::Engine;
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to read source image: {}", e))?;
     let mime = match std::path::Path::new(path)
@@ -533,10 +523,9 @@ fn read_image_as_data_uri(path: &str) -> Result<String, String> {
 pub async fn refresh_generation(
     app: &tauri::AppHandle,
     registry: &RegistryDb,
-    db: &WorkspaceDb,
     id: &str,
 ) -> Result<Generation, String> {
-    let mut record = db.load_generation(id).ok_or("Generation not found")?;
+    let mut record = registry.load_generation(id).ok_or("Generation not found")?;
 
     if record.status != "pending" {
         return Ok(record);
@@ -569,7 +558,7 @@ pub async fn refresh_generation(
             // upsert on every 2s poll tick.
             if logs.is_some() && logs != record.logs {
                 record.logs = logs;
-                let _ = db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
             }
         }
         PollOutcome::Done {
@@ -580,7 +569,7 @@ pub async fn refresh_generation(
             if logs.is_some() {
                 record.logs = logs;
             }
-            save_generated_image(db, &mut record, &image_bytes, &ext)?;
+            save_generated_image(registry, &mut record, &image_bytes, &ext)?;
         }
         PollOutcome::Failed { error, logs } => {
             if logs.is_some() {
@@ -594,12 +583,12 @@ pub async fn refresh_generation(
                 // time, instead of dying as a visible failure.
                 record.status = "queued".to_string();
                 record.poll_url = None;
-                let _ = db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
                 let _ = app.emit(RATE_LIMITED_EVENT, ());
             } else {
                 record.status = "failed".to_string();
                 record.error = Some(error);
-                let _ = db.upsert_generation(&record);
+                let _ = registry.upsert_generation(&record);
             }
         }
     }
@@ -607,16 +596,40 @@ pub async fn refresh_generation(
     Ok(record)
 }
 
-/// Write finished image bytes to the storage dir as `{id}.{ext}`, mark the
-/// generation `succeeded`, and insert the matching image row. Shared by the
-/// synchronous create path and the async poll path.
+/// The storage directory used when a generated/uploaded image has no folder
+/// to naturally belong to (nothing to vary — no source image, or its file is
+/// gone). Also the destination for `save_uploaded_image`, which isn't
+/// scoped to whichever folder the browser happens to be showing.
+pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join("Pictures").join("baim-images"))
+}
+
+/// Where a generation's output file should be written: next to its source
+/// image (so a variant shows up right where you were browsing/attached it
+/// from) when the source is still known, otherwise the app's default
+/// storage directory.
+fn resolve_output_dir(db: &RegistryDb, record: &Generation) -> std::path::PathBuf {
+    record
+        .source_id
+        .as_deref()
+        .and_then(|id| db.find_image_by_id(id))
+        .and_then(|image| std::path::Path::new(&image.path).parent().map(|p| p.to_path_buf()))
+        .filter(|dir| dir.is_dir())
+        .unwrap_or_else(|| default_storage_dir().unwrap_or_default())
+}
+
+/// Write finished image bytes next to their source image (see
+/// `resolve_output_dir`) as `{id}.{ext}`, mark the generation `succeeded`,
+/// and insert the matching image row. Shared by the synchronous create path
+/// and the async poll path.
 fn save_generated_image(
-    db: &WorkspaceDb,
+    db: &RegistryDb,
     record: &mut Generation,
     bytes: &[u8],
     ext: &str,
 ) -> Result<(), String> {
-    let images_dir = db.storage_dir();
+    let images_dir = resolve_output_dir(db, record);
     let filename = format!("{}.{}", record.id, ext);
     let filepath = images_dir.join(&filename);
 
@@ -647,31 +660,15 @@ fn save_generated_image(
     Ok(())
 }
 
-/// The storage directory used the first time the app runs, before the user has
-/// chosen one. Kept as the fallback so existing installs (and their seeded
-/// files) keep working without any migration.
-pub fn default_storage_dir() -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join("Pictures").join("baim-images"))
-}
-
-/// Delete a saved image file and its associated generation record.
-/// The path is canonicalized and required to sit directly inside the images
-/// directory, so a path coming back from the frontend can't remove sidecar
-/// records or escape the directory via `..`/symlinks.
-pub fn delete_image(db: &WorkspaceDb, path: &str) -> Result<(), String> {
-    let canonical_dir = db
-        .storage_dir()
-        .canonicalize()
-        .map_err(|e| format!("Images directory unavailable: {}", e))?;
+/// Delete a saved image file and its associated generation record. The path
+/// is canonicalized so it can't be tricked into deleting the wrong file via
+/// `..`/symlinks, but — unlike the old single-workspace build, which only
+/// allowed deleting inside its one images directory — any real file on disk
+/// can be the target now, since the browser isn't scoped to one folder.
+pub fn delete_image(db: &RegistryDb, path: &str) -> Result<(), String> {
     let canonical_target = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| format!("Image not found: {}", e))?;
-
-    if canonical_target.parent() != Some(canonical_dir.as_path()) {
-        return Err("Refusing to delete a file outside the images directory".to_string());
-    }
-
     let path_str = canonical_target.to_string_lossy().to_string();
 
     std::fs::remove_file(&canonical_target)
@@ -689,7 +686,7 @@ pub fn delete_image(db: &WorkspaceDb, path: &str) -> Result<(), String> {
 /// doesn't stop the rest from being deleted. Returns `Err` naming every path
 /// that failed (with its reason) if at least one did; `Ok` only if all
 /// succeeded.
-pub fn delete_images(db: &WorkspaceDb, paths: &[String]) -> Result<(), String> {
+pub fn delete_images(db: &RegistryDb, paths: &[String]) -> Result<(), String> {
     let failures: Vec<String> = paths
         .iter()
         .filter_map(|path| delete_image(db, path).err().map(|e| format!("{path}: {e}")))
@@ -702,26 +699,67 @@ pub fn delete_images(db: &WorkspaceDb, paths: &[String]) -> Result<(), String> {
     }
 }
 
-pub fn list_saved_images(db: &WorkspaceDb) -> Result<Vec<ImageEntry>, String> {
+pub fn list_saved_images(db: &RegistryDb) -> Result<Vec<ImageEntry>, String> {
     db.list_images()
 }
 
-pub fn list_generations(db: &WorkspaceDb) -> Result<Vec<Generation>, String> {
+pub fn list_generations(db: &RegistryDb) -> Result<Vec<Generation>, String> {
     db.list_generations()
 }
 
-/// Accept a client-side normalized PNG data URI, decode it, save the file, and
-/// insert a row into the images table. Returns the new ImageEntry so the
-/// frontend can select it immediately. `title` is the original picked file name,
-/// kept for search/display since the on-disk name is a collision-free uuid.
+/// Look up a catalog row by absolute path, inserting one on the fly (stat'd
+/// from disk) if this file has never been seen before. Used to resolve a
+/// file the user attaches to chat or picks in the live filesystem browser —
+/// which, unlike the old seeded-workspace model, isn't guaranteed to already
+/// have a row — into the stable `id` the generation pipeline keys on.
+pub fn get_or_create_image(db: &RegistryDb, path: &str) -> Result<ImageEntry, String> {
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("File not found: {}", e))?;
+    let path_str = canonical.to_string_lossy().to_string();
+
+    if let Some(existing) = db.find_image_by_path(&path_str) {
+        return Ok(existing);
+    }
+
+    let metadata = std::fs::metadata(&canonical)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let created_at = metadata
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let filename = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let entry = ImageEntry {
+        path: path_str.clone(),
+        id: uuid::Uuid::new_v4().to_string(),
+        title: Some(filename.clone()),
+        filename,
+        created_at,
+        size_bytes: metadata.len(),
+    };
+    db.insert_image(&entry)?;
+    Ok(db.find_image_by_path(&path_str).unwrap_or(entry))
+}
+
+/// Accept a client-side normalized PNG data URI, decode it, save the file
+/// into the app's default storage directory, and insert a row into the
+/// images table. Returns the new ImageEntry so the frontend can select it
+/// immediately. `title` is the original picked file name, kept for
+/// search/display since the on-disk name is a collision-free uuid.
 pub fn save_uploaded_image(
-    db: &WorkspaceDb,
+    db: &RegistryDb,
     data_uri: &str,
     title: Option<&str>,
 ) -> Result<ImageEntry, String> {
     use base64::Engine;
 
-    let images_dir = db.storage_dir();
+    let images_dir = default_storage_dir()?;
     std::fs::create_dir_all(&images_dir)
         .map_err(|e| format!("Failed to create images directory: {}", e))?;
 

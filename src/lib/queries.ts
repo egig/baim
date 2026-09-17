@@ -2,15 +2,17 @@ import { queryOptions } from "@tanstack/react-query";
 import {
   getImages,
   getGenerations,
-  getActiveWorkspace,
   refreshGeneration,
   submitQueued,
   listTemplates,
+  listChatMessages,
+  listDir,
   getMaxConcurrency,
   type ImageEntry,
   type Generation,
   type SubmitOutcome,
   type Template,
+  type ChatMessage,
 } from "./tauri";
 
 /** Concurrency the engine always starts each app launch at, before ramping up. */
@@ -81,52 +83,42 @@ export function isActive(g: Generation): boolean {
   return g.status === "queued" || g.status === "pending";
 }
 
-/** The active workspace. Only changes via an explicit `setQueryData` right
- *  after `open_workspace` succeeds (see the switcher), so this never refetches
- *  on its own. */
-export const activeWorkspaceQuery = queryOptions({
-  queryKey: ["activeWorkspace"] as const,
-  queryFn: getActiveWorkspace,
-  staleTime: Infinity,
+/** The whole image/generation catalog — app-wide (keyed by absolute path),
+ *  not scoped to whichever folder the browser happens to be showing. Split
+ *  from generations so the queue engine can poll on its own cadence without
+ *  re-fetching images every 2s. */
+export const imagesQuery = queryOptions({
+  queryKey: ["images"] as const,
+  queryFn: getImages,
+  staleTime: 30_000,
 });
 
-/** The saved image library, scoped to a workspace. Split from generations so
- *  the queue engine can poll on its own cadence without re-fetching images
- *  every 2s. Keying by workspace path is what makes switching workspaces safe
- *  — a different path is simply a different, independently-fetched cache
- *  entry, so nothing from the previous workspace can leak through. `enabled`
- *  is false until the active workspace is known, so components that mount
- *  before then don't error. */
-export function imagesQuery(workspacePath: string | undefined) {
-  return queryOptions({
-    queryKey: ["images", workspacePath ?? null] as const,
-    queryFn: getImages,
-    enabled: workspacePath != null,
-    staleTime: 30_000,
-  });
-}
-
-/** The queue engine, scoped to a workspace. One `queryFn` owns the whole state
- *  machine:
+/** The queue engine. One `queryFn` owns the whole state machine:
  *   1. poll every `pending` row one step (`refresh_generation`), and
  *   2. if in-flight < `k` (the adaptive concurrency target, see above) and any
  *      `queued` remain, submit the free slots (`submit_queued`) to promote
  *      them to `pending`, then adjust `k` based on the outcome.
  *
- *  It self-polls every 2s while any job is `queued` or `pending`, and stops once
- *  everything settles. Because the always-mounted shell (sidebar badge) observes
- *  this query, the engine keeps draining on every route. A workspace that isn't
- *  active stops being polled — its jobs resume advancing once it's reopened. */
-export function generationsQuery(workspacePath: string | undefined) {
-  return queryOptions({
-    queryKey: ["generations", workspacePath ?? null] as const,
-    queryFn: pollAndDrain,
-    enabled: workspacePath != null,
-    staleTime: 30_000,
-    refetchInterval: (query) =>
-      query.state.data?.some(isActive) ? 2000 : false,
-  });
-}
+ *  It self-polls every 2s while any job is `queued` or `pending`, and stops
+ *  once everything settles. Because the always-mounted shell (chat pane,
+ *  sidebar badge) observes this query, the engine keeps draining regardless
+ *  of which folder is being browsed. */
+export const generationsQuery = queryOptions({
+  queryKey: ["generations"] as const,
+  queryFn: pollAndDrain,
+  staleTime: 30_000,
+  refetchInterval: (query) =>
+    query.state.data?.some(isActive) ? 2000 : false,
+});
+
+/** The persistent AI chat thread — one continuous conversation, app-wide.
+ *  Mutations (`sendChatMessage`) append optimistically; this only refetches
+ *  on explicit invalidation. */
+export const chatMessagesQuery = queryOptions({
+  queryKey: ["chatMessages"] as const,
+  queryFn: listChatMessages,
+  staleTime: Infinity,
+});
 
 async function pollAndDrain(): Promise<Generation[]> {
   await ensureCeilingLoaded();
@@ -207,13 +199,22 @@ export function deriveGenerations(
   return { gens, childrenBySource, pending };
 }
 
-/** User-saved prompt templates. Unlike `imagesQuery`/`generationsQuery`, this
- *  is global (not workspace-keyed) — templates are app-wide, not scoped to
- *  whichever folder happens to be the active workspace. */
+/** User-saved prompt templates — app-wide, not scoped to any folder. */
 export const templatesQuery = queryOptions({
   queryKey: ["templates"] as const,
   queryFn: listTemplates,
   staleTime: 30_000,
 });
 
-export type { ImageEntry, Generation, Template };
+/** A live directory listing. `path: undefined` means "wherever the backend
+ *  resolves to" (last-visited folder, or home) — used only for the initial
+ *  load; every navigation afterward passes an explicit path. */
+export function dirListingQuery(path: string | undefined) {
+  return queryOptions({
+    queryKey: ["dirListing", path ?? null] as const,
+    queryFn: () => listDir(path),
+    staleTime: 5_000,
+  });
+}
+
+export type { ImageEntry, Generation, Template, ChatMessage };

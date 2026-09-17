@@ -6,10 +6,35 @@
     "id": "Bahasa Indonesia"
   },
   "nav": {
-    "allFiles": "Semua Berkas",
+    "files": "Berkas",
     "templates": "Templat",
     "history": "Riwayat",
     "settings": "Pengaturan"
+  },
+  "sidebar": {
+    "favorites": "Favorit",
+    "recents": "Terbaru",
+    "removeRecent": "Hapus dari terbaru",
+    "fav": {
+      "Home": "Rumah",
+      "Desktop": "Desktop",
+      "Pictures": "Gambar",
+      "Downloads": "Unduhan"
+    }
+  },
+  "browser": {
+    "loading": "Memuat…",
+    "empty": "Folder ini kosong.",
+    "attachedCount": "{count} dilampirkan ke chat"
+  },
+  "chat": {
+    "title": "Asisten",
+    "empty": "Lampirkan gambar dan minta varian, atau cukup sapa.",
+    "placeholder": "Pesan untuk asisten…",
+    "send": "Kirim",
+    "thinking": "Berpikir…",
+    "generating": "Menghasilkan…",
+    "generationFailed": "Generasi gagal."
   },
   "common": {
     "cancel": "Batal",
@@ -163,10 +188,6 @@
     "pending": "Berjalan",
     "succeeded": "Selesai",
     "failed": "Gagal"
-  },
-  "workspace": {
-    "removeFromList": "Hapus dari daftar",
-    "openFolder": "Buka Folder…"
   },
   "confirm": {
     "deleteAssetTitle": "Hapus aset",

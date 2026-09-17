@@ -2,6 +2,7 @@ import { Outlet } from "react-router";
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -12,13 +13,14 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import {
-  activeWorkspaceQuery,
   applyRateLimitSignal,
+  dirListingQuery,
   generationsQuery,
   isActive,
 } from "./lib/queries";
 import Settings from "./routes/settings";
 import { Sidebar } from "./components/Sidebar";
+import { ChatPane } from "./components/ChatPane";
 import { IconX } from "./lib/icons";
 
 /** Height of the custom titlebar (drag region + traffic-light space on
@@ -227,12 +229,33 @@ export function Dialog({
 
 /* ---------- shell context ---------- */
 
-const ShellContext = createContext<{
+interface ShellValue {
   openSettings: () => void;
-}>({ openSettings: () => {} });
+  /** The folder the browser is currently showing. `null` until the initial
+   *  `list_dir` resolution (last-visited folder, or home) lands. Lifted up
+   *  here — rather than owned by the browser route — because the sidebar's
+   *  favorites/recents also need to trigger and reflect navigation. */
+  currentPath: string | null;
+  navigateTo: (path: string) => void;
+  /** Files attached to the next chat message, picked in the browser.
+   *  Lifted here for the same reason: the browser sets them, the chat pane
+   *  reads/clears them. */
+  attachments: string[];
+  toggleAttachment: (path: string) => void;
+  clearAttachments: () => void;
+}
 
-/** Shell actions (open the settings dialog) for pages rendered in the outlet,
- *  e.g. the assets page's missing-API-key banner. */
+const ShellContext = createContext<ShellValue>({
+  openSettings: () => {},
+  currentPath: null,
+  navigateTo: () => {},
+  attachments: [],
+  toggleAttachment: () => {},
+  clearAttachments: () => {},
+});
+
+/** Shell actions/state shared between the sidebar, the routed browser page,
+ *  and the always-mounted chat pane. */
 export function useShell() {
   return useContext(ShellContext);
 }
@@ -260,11 +283,32 @@ function Titlebar() {
 export default function Root() {
   // Observing the queue engine from the always-mounted shell keeps it polling
   // and draining regardless of route; the count drives the sidebar's Riwayat badge.
-  const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
   const { data: activeCount = 0 } = useQuery({
-    ...generationsQuery(activeWorkspace?.path),
+    ...generationsQuery,
     select: (gens) => gens.filter(isActive).length,
   });
+
+  // The folder the browser shows. Starts unresolved; the bootstrap query
+  // below resolves it once (backend: last-visited folder, else home) and
+  // every explicit `navigateTo` after that is just a plain state update —
+  // no route param, so it survives switching to Templates/History and back.
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const { data: bootListing } = useQuery({
+    ...dirListingQuery(undefined),
+    enabled: currentPath === null,
+  });
+  useEffect(() => {
+    if (currentPath === null && bootListing) setCurrentPath(bootListing.path);
+  }, [currentPath, bootListing]);
+  const navigateTo = useCallback((path: string) => setCurrentPath(path), []);
+
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const toggleAttachment = useCallback((path: string) => {
+    setAttachments((prev) =>
+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
+    );
+  }, []);
+  const clearAttachments = useCallback(() => setAttachments([]), []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeDialog = () => setSettingsOpen(false);
@@ -285,9 +329,16 @@ export default function Root() {
     };
   }, []);
 
-  const shell = useMemo(
-    () => ({ openSettings: () => setSettingsOpen(true) }),
-    []
+  const shell = useMemo<ShellValue>(
+    () => ({
+      openSettings: () => setSettingsOpen(true),
+      currentPath,
+      navigateTo,
+      attachments,
+      toggleAttachment,
+      clearAttachments,
+    }),
+    [currentPath, navigateTo, attachments, toggleAttachment, clearAttachments]
   );
 
   return (
@@ -310,14 +361,10 @@ export default function Root() {
             minHeight: 0,
           }}
         >
-          <Sidebar
-            activeWorkspace={activeWorkspace}
-            activeCount={activeCount}
-            onOpenSettings={shell.openSettings}
-          />
+          <Sidebar activeCount={activeCount} onOpenSettings={shell.openSettings} />
           <div
             style={{
-              flex: 1,
+              flex: 2,
               display: "flex",
               flexDirection: "column",
               minWidth: 0,
@@ -326,6 +373,7 @@ export default function Root() {
           >
             <Outlet />
           </div>
+          <ChatPane />
         </div>
 
         {settingsOpen && (

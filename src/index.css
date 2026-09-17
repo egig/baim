@@ -100,3 +100,12 @@ body {
   background: var(--fill-1);
   color: var(--ink-700);
 }
+
+/* File browser tiles (routes/browser/FileTile.tsx): subtle hover fill, and
+   the per-image delete overlay only shows up while hovering its tile. */
+.assets-app .file-tile:hover {
+  background: var(--fill-1);
+}
+.assets-app .file-tile:hover .file-tile-delete {
+  display: flex !important;
+}

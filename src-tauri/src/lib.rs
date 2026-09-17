@@ -1,26 +1,38 @@
+mod browse;
+mod chat;
 mod commands;
-mod db;
 mod generation;
 mod provider;
 mod providers;
 mod registry;
 mod templates;
-mod workspace;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use registry::RegistryDb;
 use tauri::Manager;
-use workspace::AppState;
 
-/// The registry database's stable app-data location (not inside any workspace
-/// folder), so the app always boots even before the user has opened a
-/// workspace. If an older install's `catalog.db` (the pre-workspace single
+/// Top-level Tauri managed state. `registry` is the single always-open
+/// connection to `baim.db` — settings, API keys, the image/generation
+/// catalog, the chat thread, and recent folders all live behind it. `Arc`
+/// so it can be cheaply cloned into detached async tasks (see
+/// `generation::spawn_interaction`) that must outlive the command call that
+/// started them.
+pub struct AppState {
+    pub registry: Arc<RegistryDb>,
+    /// App-wide directory holding copied preview images for saved prompt
+    /// templates (`<app-data>/com.recraftory.baim/templates/`), registered
+    /// with the asset protocol scope once at startup.
+    pub templates_dir: PathBuf,
+}
+
+/// The registry database's stable app-data location (not inside any browsed
+/// folder), so the app always boots regardless of where the user is
+/// browsing. If an older install's `catalog.db` (the pre-registry single
 /// global catalog) is found and `baim.db` doesn't exist yet, rename it in
 /// place — it becomes the registry under its new name, keeping its `settings`
-/// table (API keys, active provider) with zero user-visible migration. Its
-/// old `images`/`generations` rows are left in the file, unused.
+/// table (API keys, active provider) with zero user-visible migration.
 fn registry_db_path(dir: &Path) -> PathBuf {
     let old = dir.join("catalog.db");
     let new = dir.join("baim.db");
@@ -60,6 +72,14 @@ pub fn run() {
             let registry =
                 RegistryDb::open(&registry_path).expect("Failed to initialize registry database");
 
+            // Initiations-mode rows left `pending`/no-poll_url when the app
+            // last closed never got to write their result — reset them to
+            // `queued` so the normal drain loop silently re-fires them (see
+            // `RegistryDb::reconcile_orphaned_interactions`). Used to run once
+            // per workspace open; now once at startup, since there's one
+            // catalog for the whole app.
+            let _ = registry.reconcile_orphaned_interactions();
+
             // Initialize the OpenAI-compatible provider config from the registry.
             if let (Some(base_url), Some(model)) = (
                 registry.read_setting("openai_compatible_base_url"),
@@ -68,12 +88,9 @@ pub fn run() {
                 providers::openai_compatible::set_config(base_url, model);
             }
 
-            let handle = workspace::boot_workspace(app, &registry)
-                .expect("Failed to open a workspace");
-
-            // Template preview images live outside any workspace folder, so
-            // they need their own asset-protocol grant (see the per-workspace
-            // grant in workspace.rs::build_workspace_handle for the same idea).
+            // Template preview images live outside any browsed folder, so
+            // they need their own asset-protocol grant (dynamic per-folder
+            // grants for browsed images happen in `browse::list_dir`).
             let templates_dir = templates::templates_dir(&app_dir);
             std::fs::create_dir_all(&templates_dir)
                 .expect("Failed to create templates directory");
@@ -84,8 +101,7 @@ pub fn run() {
                 .expect("Failed to seed built-in templates");
 
             app.manage(AppState {
-                registry,
-                workspace: Mutex::new(Arc::new(handle)),
+                registry: Arc::new(registry),
                 templates_dir,
             });
 
@@ -112,10 +128,14 @@ pub fn run() {
             commands::save_uploaded_image,
             commands::get_openai_compatible_config,
             commands::set_openai_compatible_config,
-            commands::list_workspaces,
-            commands::get_active_workspace,
-            commands::open_workspace,
-            commands::forget_workspace,
+            commands::list_dir,
+            commands::list_favorites,
+            commands::list_recent_folders,
+            commands::remove_recent_folder,
+            commands::open_path_externally,
+            commands::reveal_in_file_manager,
+            commands::send_chat_message,
+            commands::list_chat_messages,
             commands::list_templates,
             commands::save_template,
             commands::create_template,

@@ -199,33 +199,90 @@ export async function saveImage(
   });
 }
 
-/** A user-picked folder holding its own images/generations catalog. Display
- *  `name` is always the live folder basename, never a stored/editable name. */
-export interface WorkspaceInfo {
+/** One entry in a live directory listing — a folder or a file, not resolved
+ *  against any catalog. */
+export interface DirEntry {
   path: string;
   name: string;
-  last_opened_at: number;
+  is_dir: boolean;
+  is_image: boolean;
+  size_bytes: number;
+  modified_at: number;
 }
 
-/** Known workspaces, most-recently-opened first. */
-export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
-  return invoke<WorkspaceInfo[]>("list_workspaces");
+export interface DirListing {
+  path: string;
+  parent: string | null;
+  entries: DirEntry[];
 }
 
-/** The currently active workspace. */
-export async function getActiveWorkspace(): Promise<WorkspaceInfo> {
-  return invoke<WorkspaceInfo>("get_active_workspace");
+/** Live-list one folder's contents (folders + every file). `path` omitted
+ *  resolves to the last-visited folder, falling back to home. */
+export async function listDir(path?: string): Promise<DirListing> {
+  return invoke<DirListing>("list_dir", { path: path ?? null });
 }
 
-/** Open (or switch to) a workspace folder, creating its catalog the first
- *  time it's opened. */
-export async function openWorkspace(path: string): Promise<WorkspaceInfo> {
-  return invoke<WorkspaceInfo>("open_workspace", { path });
+/** A pinned starter location in the sidebar (Home, Desktop, Pictures,
+ *  Downloads) — a fixed set, existing directories only. */
+export interface FavoriteEntry {
+  label: string;
+  path: string;
 }
 
-/** Remove a workspace from the recents list. Does not touch any files. */
-export async function forgetWorkspace(path: string): Promise<void> {
-  return invoke<void>("forget_workspace", { path });
+export async function listFavorites(): Promise<FavoriteEntry[]> {
+  return invoke<FavoriteEntry[]>("list_favorites");
+}
+
+/** A folder the user has browsed, most-recently-visited first. */
+export interface FolderRow {
+  path: string;
+  last_visited_at: number;
+}
+
+export async function listRecentFolders(): Promise<FolderRow[]> {
+  return invoke<FolderRow[]>("list_recent_folders");
+}
+
+/** Remove a folder from the recents list. Does not touch any files. */
+export async function removeRecentFolder(path: string): Promise<void> {
+  return invoke<void>("remove_recent_folder", { path });
+}
+
+/** Open a file in its OS-default application. */
+export async function openPathExternally(path: string): Promise<void> {
+  return invoke<void>("open_path_externally", { path });
+}
+
+/** Reveal a file in the system file manager (Finder/Explorer). */
+export async function revealInFileManager(path: string): Promise<void> {
+  return invoke<void>("reveal_in_file_manager", { path });
+}
+
+/** One turn of the persistent AI chat thread. */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  /** Absolute paths attached to this turn (empty for assistant turns). */
+  attachments: string[];
+  /** Set on an assistant turn that triggered a generation, so the UI can
+   *  track its live status/result via `getGenerations`. */
+  generation_id: string | null;
+  created_at: number;
+}
+
+/** Send one turn to the assistant. Returns the new user+assistant rows
+ *  (not the whole thread) — append them to the cached list. */
+export async function sendChatMessage(
+  text: string,
+  attachments: string[]
+): Promise<ChatMessage[]> {
+  return invoke<ChatMessage[]>("send_chat_message", { text, attachments });
+}
+
+/** The whole persistent chat thread, oldest first. */
+export async function listChatMessages(): Promise<ChatMessage[]> {
+  return invoke<ChatMessage[]>("list_chat_messages");
 }
 
 /** A user-saved prompt template: a reusable name + prompt, with a preview

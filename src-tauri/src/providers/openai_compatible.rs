@@ -361,6 +361,185 @@ fn spawn_item(
     });
 }
 
+// ---- chat (text, tool-calling) ----
+//
+// Separate from the image-generation path above: a plain, synchronous
+// `/chat/completions` call (no `modalities` override, no background
+// task/registry) used by the persistent AI chat pane (see `chat.rs`). Reuses
+// this module's `config()`/`ContentPart`/`find_error_message` since it's the
+// same endpoint shape, just a different payload and response parse.
+
+/// One turn to send as context, already resolved to what the wire format
+/// needs — `chat.rs` builds this list from the persisted thread.
+pub struct ChatTurnInput {
+    /// `"system"`, `"user"`, or `"assistant"`.
+    pub role: String,
+    pub text: String,
+    /// Attached images for this turn (empty for assistant turns and
+    /// image-less user turns), already read off disk and encoded.
+    pub image_data_uris: Vec<String>,
+}
+
+/// What the model produced: plain text, or a request to call the one tool
+/// it's offered (`generate_image`).
+pub enum ChatReply {
+    Text(String),
+    ToolCall { name: String, arguments: serde_json::Value },
+}
+
+#[derive(Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatReqMessage>,
+    tools: Vec<ToolDef>,
+}
+
+#[derive(Serialize)]
+struct ChatReqMessage {
+    role: &'static str,
+    content: ChatContent,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ChatContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+#[derive(Serialize)]
+struct ToolDef {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: ToolFunctionDef,
+}
+
+#[derive(Serialize)]
+struct ToolFunctionDef {
+    name: &'static str,
+    description: &'static str,
+    parameters: serde_json::Value,
+}
+
+fn generate_image_tool() -> ToolDef {
+    ToolDef {
+        kind: "function",
+        function: ToolFunctionDef {
+            name: "generate_image",
+            description: "Generate an edited variant of the image attached to the user's most recent message, from a text prompt describing the desired change. Requires an attached image — if the latest user message has none, do not call this; ask the user to attach one instead.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "A description of the desired change to make to the attached image."
+                    }
+                },
+                "required": ["prompt"]
+            }),
+        },
+    }
+}
+
+/// Send the whole turn history (oldest first) to the configured
+/// OpenAI-compatible endpoint and return either its text reply or a
+/// `generate_image` tool call. A single attempt, no retry — chat is
+/// interactive, so a fast failure the user can just resend beats the image
+/// path's patient backoff.
+pub async fn chat_complete(api_key: &str, turns: &[ChatTurnInput]) -> Result<ChatReply, String> {
+    let cfg = config()?;
+
+    let messages: Vec<ChatReqMessage> = turns
+        .iter()
+        .map(|t| {
+            let role = match t.role.as_str() {
+                "system" => "system",
+                "assistant" => "assistant",
+                _ => "user",
+            };
+            let content = if t.image_data_uris.is_empty() {
+                ChatContent::Text(t.text.clone())
+            } else {
+                let mut parts = vec![ContentPart::Text {
+                    text: t.text.clone(),
+                }];
+                parts.extend(t.image_data_uris.iter().map(|uri| ContentPart::ImageUrl {
+                    image_url: ImageUrl { url: uri.clone() },
+                }));
+                ChatContent::Parts(parts)
+            };
+            ChatReqMessage { role, content }
+        })
+        .collect();
+
+    let payload = ChatRequest {
+        model: cfg.model,
+        messages,
+        tools: vec![generate_image_tool()],
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let url = format!("{}/chat/completions", cfg.base_url);
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach endpoint: {}", e))?;
+
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse response: {} — body: {}", e, body))?;
+
+    if !status.is_success() {
+        if status.as_u16() == 429 {
+            return Err(RATE_LIMITED_ERROR.to_string());
+        }
+        let msg = find_error_message(&parsed).unwrap_or(body);
+        return Err(format!("Chat API error ({}): {}", status, msg));
+    }
+
+    let message = parsed
+        .pointer("/choices/0/message")
+        .ok_or_else(|| format!("Response contained no message: {}", body))?;
+
+    if let Some(call) = message
+        .get("tool_calls")
+        .and_then(|v| v.as_array())
+        .and_then(|calls| calls.first())
+    {
+        let name = call
+            .pointer("/function/name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let args_str = call
+            .pointer("/function/arguments")
+            .and_then(|v| v.as_str())
+            .unwrap_or("{}");
+        let arguments: serde_json::Value =
+            serde_json::from_str(args_str).unwrap_or_else(|_| serde_json::json!({}));
+        return Ok(ChatReply::ToolCall { name, arguments });
+    }
+
+    let text = message
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(ChatReply::Text(text))
+}
+
 // ---- trait impl ----
 
 pub struct OpenAiCompatibleProvider;

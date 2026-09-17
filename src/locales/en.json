@@ -6,10 +6,35 @@
     "id": "Bahasa Indonesia"
   },
   "nav": {
-    "allFiles": "All Files",
+    "files": "Files",
     "templates": "Templates",
     "history": "History",
     "settings": "Settings"
+  },
+  "sidebar": {
+    "favorites": "Favorites",
+    "recents": "Recents",
+    "removeRecent": "Remove from recents",
+    "fav": {
+      "Home": "Home",
+      "Desktop": "Desktop",
+      "Pictures": "Pictures",
+      "Downloads": "Downloads"
+    }
+  },
+  "browser": {
+    "loading": "Loading…",
+    "empty": "This folder is empty.",
+    "attachedCount": "{count} attached to chat"
+  },
+  "chat": {
+    "title": "Assistant",
+    "empty": "Attach an image and ask for a variant, or just say hello.",
+    "placeholder": "Message the assistant…",
+    "send": "Send",
+    "thinking": "Thinking…",
+    "generating": "Generating…",
+    "generationFailed": "Generation failed."
   },
   "common": {
     "cancel": "Cancel",
@@ -163,10 +188,6 @@
     "pending": "Running",
     "succeeded": "Done",
     "failed": "Failed"
-  },
-  "workspace": {
-    "removeFromList": "Remove from list",
-    "openFolder": "Open Folder…"
   },
   "confirm": {
     "deleteAssetTitle": "Delete asset",

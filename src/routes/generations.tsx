@@ -8,8 +8,8 @@ import {
   type Generation,
   type ImageEntry,
 } from "../lib/tauri";
-import { activeWorkspaceQuery, generationsQuery, imagesQuery } from "../lib/queries";
-import { Button, ImageViewer, useEscapeLayer } from "../root";
+import { generationsQuery, imagesQuery } from "../lib/queries";
+import { Button, ImageViewer, useEscapeLayer, useShell } from "../root";
 import { Segmented } from "../components/Segmented";
 import { localeTag, useT } from "../lib/i18n";
 import { IconX, IconLoader2 } from "../lib/icons";
@@ -402,10 +402,9 @@ export default function Generations() {
   const { t } = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { data: activeWorkspace } = useQuery(activeWorkspaceQuery);
-  const wsPath = activeWorkspace?.path;
-  const { data: generations = [] } = useQuery(generationsQuery(wsPath));
-  const { data: images = [] } = useQuery(imagesQuery(wsPath));
+  const { navigateTo } = useShell();
+  const { data: generations = [] } = useQuery(generationsQuery);
+  const { data: images = [] } = useQuery(imagesQuery);
 
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
@@ -446,7 +445,7 @@ export default function Generations() {
   const panelOpen = !!selectedGen;
 
   const refresh = () =>
-    qc.invalidateQueries({ queryKey: generationsQuery(wsPath).queryKey });
+    qc.invalidateQueries({ queryKey: generationsQuery.queryKey });
 
   async function onClearQueue() {
     if (busy || queuedCount === 0) return;
@@ -491,10 +490,14 @@ export default function Generations() {
     return src ? convertFileSrc(src.path) : null;
   }
 
-  /** Panel action: navigate to the assets library and select this output image
-   *  there (via router state, consumed by the selectPath effect in assets.tsx). */
+  /** Panel action: switch the file browser to this image's containing folder
+   *  so the user can see it in place. */
   function onOpenImage(path: string) {
-    navigate("/", { state: { selectPath: path } });
+    const sep = path.includes("\\") ? "\\" : "/";
+    const cut = path.lastIndexOf(sep);
+    const parent = cut > 0 ? path.slice(0, cut) : sep;
+    navigateTo(parent);
+    navigate("/");
   }
 
   /** Panel action: retry a failed generation and *follow* the fresh job —

@@ -1,4 +1,4 @@
-import { useT } from "../../lib/i18n";
+import { useT } from "../lib/i18n";
 
 /** Banner shown when the active provider has no API key saved yet — generation
  *  is gated on it. `onOpenSettings` opens the shell's settings dialog. */

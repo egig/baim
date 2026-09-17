@@ -1,9 +1,11 @@
+use crate::browse::{self, DirListing, FavoriteEntry};
+use crate::chat;
 use crate::generation;
 use crate::generation::{Generation, ImageEntry, SubmitOutcome};
 use crate::provider::{self, ProviderInfo};
-use crate::registry::TemplateRow;
+use crate::registry::{ChatMessageRow, FolderRow, TemplateRow};
 use crate::templates;
-use crate::workspace::{self, active_workspace, AppState, WorkspaceInfo};
+use crate::AppState;
 
 /// Enqueue a single generation (status `queued`) referencing its source image by
 /// id. The queue drainer (`submit_queued`) submits it to the provider later.
@@ -17,9 +19,8 @@ pub fn create_prediction(
     source_id: Option<String>,
     mode: Option<String>,
 ) -> Result<Generation, String> {
-    let ws = active_workspace(&state)?;
     generation::create_prediction(
-        &ws.db,
+        &state.registry,
         &prompt,
         &provider,
         source_id.as_deref(),
@@ -37,9 +38,8 @@ pub fn create_predictions(
     source_id: Option<String>,
     mode: Option<String>,
 ) -> Result<Vec<Generation>, String> {
-    let ws = active_workspace(&state)?;
     generation::create_predictions(
-        &ws.db,
+        &state.registry,
         &prompts,
         &provider,
         source_id.as_deref(),
@@ -58,15 +58,13 @@ pub async fn submit_queued(
     state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<SubmitOutcome, String> {
-    let ws = active_workspace(&state)?;
-    generation::submit_queued(&app, &state.registry, ws, limit).await
+    generation::submit_queued(&app, state.registry.clone(), limit).await
 }
 
 /// Drop every `queued` job ("Clear queue"). In-flight jobs finish.
 #[tauri::command]
 pub fn clear_queue(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let ws = active_workspace(&state)?;
-    generation::clear_queue(&ws.db)
+    generation::clear_queue(&state.registry)
 }
 
 /// Re-enqueue an existing generation (Retry) as a fresh `queued` job.
@@ -75,8 +73,7 @@ pub fn requeue_generation(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Generation, String> {
-    let ws = active_workspace(&state)?;
-    generation::requeue_generation(&ws.db, &id)
+    generation::requeue_generation(&state.registry, &id)
 }
 
 #[tauri::command]
@@ -85,8 +82,7 @@ pub async fn refresh_generation(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Generation, String> {
-    let ws = active_workspace(&state)?;
-    generation::refresh_generation(&app, &state.registry, &ws.db, &id).await
+    generation::refresh_generation(&app, &state.registry, &id).await
 }
 
 /// Whether the given provider has an API key saved (the value is never returned
@@ -150,22 +146,19 @@ pub fn set_max_concurrency(state: tauri::State<'_, AppState>, value: u32) -> Res
 
 #[tauri::command]
 pub fn get_images(state: tauri::State<'_, AppState>) -> Result<Vec<ImageEntry>, String> {
-    let ws = active_workspace(&state)?;
-    generation::list_saved_images(&ws.db)
+    generation::list_saved_images(&state.registry)
 }
 
 #[tauri::command]
 pub fn get_generations(state: tauri::State<'_, AppState>) -> Result<Vec<Generation>, String> {
-    let ws = active_workspace(&state)?;
-    generation::list_generations(&ws.db)
+    generation::list_generations(&state.registry)
 }
 
 // `async` so the file + SQLite work runs on Tauri's async runtime rather than
 // the main thread, where it would block the webview UI until it completes.
 #[tauri::command]
 pub async fn delete_image(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
-    let ws = active_workspace(&state)?;
-    generation::delete_image(&ws.db, &path)
+    generation::delete_image(&state.registry, &path)
 }
 
 /// Delete multiple images at once (bulk-select "Delete"). Best-effort: partial
@@ -175,8 +168,7 @@ pub async fn delete_images(
     state: tauri::State<'_, AppState>,
     paths: Vec<String>,
 ) -> Result<(), String> {
-    let ws = active_workspace(&state)?;
-    generation::delete_images(&ws.db, &paths)
+    generation::delete_images(&state.registry, &paths)
 }
 
 // `async` for the same reason: base64-decoding and writing the upload to disk
@@ -187,8 +179,7 @@ pub async fn save_uploaded_image(
     data_uri: String,
     title: Option<String>,
 ) -> Result<ImageEntry, String> {
-    let ws = active_workspace(&state)?;
-    generation::save_uploaded_image(&ws.db, &data_uri, title.as_deref())
+    generation::save_uploaded_image(&state.registry, &data_uri, title.as_deref())
 }
 
 /// The configured OpenAI-compatible endpoint's base URL and model id.
@@ -230,36 +221,62 @@ pub fn set_openai_compatible_config(
     Ok(())
 }
 
-/// Known workspaces, most-recently-opened first.
+/// Live-list one folder's contents (folders + every file, not just images).
+/// `path: None` resolves to the last-visited folder, falling back to home.
 #[tauri::command]
-pub fn list_workspaces(state: tauri::State<'_, AppState>) -> Result<Vec<WorkspaceInfo>, String> {
-    workspace::list_workspaces_info(&state)
-}
-
-/// The currently active workspace.
-#[tauri::command]
-pub fn get_active_workspace(state: tauri::State<'_, AppState>) -> Result<WorkspaceInfo, String> {
-    workspace::get_active_workspace_info(&state)
-}
-
-/// Open (or switch to) a workspace folder, creating its catalog if this is the
-/// first time it's been opened. `async` since it does blocking filesystem and
-/// SQLite work (folder creation, DB init, disk seeding) that shouldn't block
-/// the UI thread.
-#[tauri::command]
-pub async fn open_workspace(
+pub fn list_dir(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    path: String,
-) -> Result<WorkspaceInfo, String> {
-    workspace::open_workspace(&app, &state, &path)
+    path: Option<String>,
+) -> Result<DirListing, String> {
+    browse::list_dir(&app, &state.registry, path)
 }
 
-/// Remove a workspace from the recents list. Does not touch any files, and
-/// refuses nothing about the currently active workspace continuing to run.
+/// The fixed sidebar favorites (Home, Desktop, Pictures, Downloads).
 #[tauri::command]
-pub fn forget_workspace(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
-    state.registry.forget_workspace(&path)
+pub fn list_favorites() -> Vec<FavoriteEntry> {
+    browse::list_favorites()
+}
+
+/// Recently-visited folders, most-recent first.
+#[tauri::command]
+pub fn list_recent_folders(state: tauri::State<'_, AppState>) -> Result<Vec<FolderRow>, String> {
+    state.registry.list_recent_folders()
+}
+
+/// Remove a folder from the recents list. Does not touch any files.
+#[tauri::command]
+pub fn remove_recent_folder(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    state.registry.remove_recent_folder(&path)
+}
+
+/// Open a file in its OS-default application.
+#[tauri::command]
+pub fn open_path_externally(path: String) -> Result<(), String> {
+    browse::open_path_externally(&path)
+}
+
+/// Reveal a file in the system file manager (Finder/Explorer).
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    browse::reveal_in_file_manager(&path)
+}
+
+/// Send one turn to the persistent AI chat thread and get back the new
+/// user+assistant rows. See `chat::send_message`.
+#[tauri::command]
+pub async fn send_chat_message(
+    state: tauri::State<'_, AppState>,
+    text: String,
+    attachments: Vec<String>,
+) -> Result<Vec<ChatMessageRow>, String> {
+    chat::send_message(&state.registry, text, attachments).await
+}
+
+/// The whole persistent chat thread, oldest first.
+#[tauri::command]
+pub fn list_chat_messages(state: tauri::State<'_, AppState>) -> Result<Vec<ChatMessageRow>, String> {
+    chat::list_messages(&state.registry)
 }
 
 /// User-saved prompt templates, most-recently-created first.
